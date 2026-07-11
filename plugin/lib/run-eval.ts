@@ -10,9 +10,19 @@
  * whether the skill was triggered.
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs"
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs"
 import { dirname, join, parse } from "path"
 import { randomBytes } from "crypto"
+import { tmpdir as osTmpdir } from "os"
 
 import { isFailedProcess, runProcess } from "./process"
 
@@ -152,8 +162,62 @@ export function findProjectRoot(cwd?: string): string {
 }
 
 /**
- * Run a single query against `opencode run` and return whether the
- * temporary skill name appeared in the output.
+ * Mirror a project config entry into the eval root. Prefers a symlink (cheap,
+ * no copy), passing an explicit type so directory links resolve correctly. On
+ * platforms where symlinks are unavailable — Windows without admin/Developer
+ * Mode rejects them with EPERM — fall back to a recursive copy so eval
+ * isolation still works cross-platform.
+ */
+function linkOrCopyConfigEntry(source: string, target: string, isDirectory: boolean): void {
+  try {
+    symlinkSync(source, target, isDirectory ? "dir" : "file")
+  } catch {
+    cpSync(source, target, { recursive: true })
+  }
+}
+
+export function symlinkProjectOpenCodeConfig(
+  projectRoot: string,
+  evalRoot: string,
+  skillName: string,
+): void {
+  const sourceOpenCode = join(projectRoot, ".opencode")
+  if (!existsSync(sourceOpenCode)) return
+
+  const targetOpenCode = join(evalRoot, ".opencode")
+  mkdirSync(targetOpenCode, { recursive: true })
+
+  for (const entry of readdirSync(sourceOpenCode, { withFileTypes: true })) {
+    if (entry.name === "skills") continue
+    linkOrCopyConfigEntry(
+      join(sourceOpenCode, entry.name),
+      join(targetOpenCode, entry.name),
+      entry.isDirectory(),
+    )
+  }
+
+  const sourceSkills = join(sourceOpenCode, "skills")
+  if (!existsSync(sourceSkills)) return
+
+  const targetSkills = join(targetOpenCode, "skills")
+  mkdirSync(targetSkills, { recursive: true })
+  for (const entry of readdirSync(sourceSkills, { withFileTypes: true })) {
+    if (entry.name === skillName) continue
+    linkOrCopyConfigEntry(
+      join(sourceSkills, entry.name),
+      join(targetSkills, entry.name),
+      entry.isDirectory(),
+    )
+  }
+}
+
+/**
+ * Run a single query against `opencode run` and return whether the temporary
+ * skill name appeared in the output.
+ *
+ * Each run gets its own temporary OpenCode project root. This keeps parallel
+ * workers from seeing one another's synthetic skills and producing false
+ * negatives when a sibling synthetic skill is selected.
  */
 async function runSingleQuery(
   query: string,
@@ -173,10 +237,12 @@ async function runSingleQuery(
 
   const uniqueId = randomBytes(4).toString("hex")
   const cleanName = `${skillName}-skill-${uniqueId}`
-  const skillsDir = join(projectRoot, ".opencode", "skills", cleanName)
+  const evalRoot = mkdtempSync(join(osTmpdir(), "opencode-skill-eval-"))
+  const skillsDir = join(evalRoot, ".opencode", "skills", cleanName)
   const skillFile = join(skillsDir, "SKILL.md")
 
   try {
+    symlinkProjectOpenCodeConfig(projectRoot, evalRoot, skillName)
     mkdirSync(skillsDir, { recursive: true })
 
     // Use YAML block scalar to avoid breaking on quotes in description
@@ -242,8 +308,13 @@ async function runSingleQuery(
     }
 
     const result = await runProcess(cmd, {
-      cwd: projectRoot,
-      env: { ...process.env },
+      cwd: evalRoot,
+      // opencode resolves its project root (and thus project-scoped skills) from
+      // $PWD, not the spawn cwd. Leaking the caller's PWD makes the nested run
+      // load the *real* project skill under test (base name), so its triggers are
+      // attributed to that skill instead of the synthetic one — a false 0. Pin PWD
+      // to evalRoot so only the synthetic skill (plus global skills) are in scope.
+      env: { ...process.env, PWD: evalRoot },
       timeoutMs,
       maxStderrChars,
       onStdoutChunk(chunk) {
@@ -270,9 +341,9 @@ async function runSingleQuery(
 
     return triggered
   } finally {
-    // Clean up the temporary skill directory
-    if (existsSync(skillsDir)) {
-      rmSync(skillsDir, { recursive: true, force: true })
+    // Clean up the isolated temporary project root.
+    if (existsSync(evalRoot)) {
+      rmSync(evalRoot, { recursive: true, force: true })
     }
   }
 }
