@@ -52,6 +52,8 @@ Run one command (global install, recommended):
 npx opencode-skill-creator install --global
 ```
 
+Note: `opencode-skill-creator` on npm is the upstream package, so `npx` installs upstream, not this fork. Fork users should install from this fork's repository — see [Fork identity and installation](#fork-identity-and-installation).
+
 Optional checks:
 
 ```bash
@@ -117,6 +119,8 @@ Command version:
 npx opencode-skill-creator install --global
 ```
 
+Note: `opencode-skill-creator` on npm is the upstream package, so `npx` installs upstream, not this fork. Fork users should install from this fork's repository — see [Fork identity and installation](#fork-identity-and-installation).
+
 1. Open (or create) `~/.config/opencode/opencode.jsonc` or `~/.config/opencode/opencode.json`
 2. Add:
 
@@ -152,7 +156,7 @@ npx opencode-skill-creator install --project
 ### Option E: manual install (no npm)
 
 ```bash
-git clone https://github.com/antongulin/opencode-skill-creator.git
+git clone https://github.com/JhonMA82/opencode-skill-creator.git
 cd opencode-skill-creator
 
 # Install the skill (global)
@@ -411,6 +415,22 @@ Every added capability carries its provenance, so it stays clear what is conserv
 - **Five new plugin tools**: `skill_validate_cases` (behavioral case validation + baseline policy), `skill_collect_rationalizations` (observable failure explanations), `skill_regression_suite` (permanent regression cases), `skill_context_lint` (context/token budget lint), and `skill_instruction_usefulness` (does an instruction earn its context cost).
 - **Methodology docs**: the authoring methodology is documented in [`docs/methodologies/`](docs/methodologies/) — [behavioral-tdd.md](docs/methodologies/behavioral-tdd.md), [evaluation-strategy.md](docs/methodologies/evaluation-strategy.md), [progressive-disclosure.md](docs/methodologies/progressive-disclosure.md), and [instruction-quality.md](docs/methodologies/instruction-quality.md).
 - **Upstream-friendly Linux fix**: the best-effort browser open in the review server now handles the async `error` event, so headless Linux environments (where `open` does not exist) no longer crash the server with an `uncaughtException` — a minimal change that does not affect macOS behavior and could be contributed upstream.
+
+## Fork identity and installation
+
+This repository is a maintained fork of [antongulin/opencode-skill-creator](https://github.com/antongulin/opencode-skill-creator) (fork owner: JhonMA82). The public npm package `opencode-skill-creator` belongs to the upstream project and tracks its releases — `npx opencode-skill-creator` and `npm i -g opencode-skill-creator` install upstream, not this fork's extensions.
+
+To install this fork's plugin:
+
+1. Clone the fork: `git clone https://github.com/JhonMA82/opencode-skill-creator.git`
+2. Install the plugin from the local clone — [plugin/README.md](plugin/README.md) documents the manual install (its clone URL points at upstream; use the fork URL above). In short, copy or symlink the `plugin/` directory into OpenCode's plugins directory, e.g. `cp -r plugin/ ~/.config/opencode/plugins/skill-creator/`
+3. Restart OpenCode.
+
+The bundled skill auto-installs on first plugin startup (it is copied to `~/.config/opencode/skills/opencode-skill-creator/`), so no separate skill install is needed.
+
+Upstream behavior to know: the plugin periodically checks `https://registry.npmjs.org/opencode-skill-creator/latest` and refreshes its cached plugin files when upstream publishes a newer version. Fork users who want to stay on this fork's code can disable that check with `OPENCODE_SKILL_CREATOR_AUTO_UPDATE=0`.
+
+Upstream remains the canonical project — the plugin and skill machinery are upstream work, preserved unchanged in this fork.
 
 ## Contributing
 
