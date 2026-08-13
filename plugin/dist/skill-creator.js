@@ -12476,260 +12476,11 @@ function validateSkill(skillPath) {
   return { valid: true, message: "Skill is valid!" };
 }
 
-// lib/context-budget.ts
-import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 } from "fs";
-import { join as join2, relative, sep } from "path";
-var DEFAULT_SKILL_MD_WARNING_WORDS = 500;
-var DEFAULT_FREQUENT_SKILL_WARNING_WORDS = 250;
-var DEFAULT_REFERENCE_DEPTH_WARNING = 2;
-var LARGEST_REFERENCE_WARNING_WORDS = 1500;
-var MAX_REFERENCE_FILES = 5;
-var MAX_DUPLICATES_LISTED = 3;
-var FRONTMATTER_RE = /^---\n([\s\S]*?)\n---/;
-function estimateTokens(text) {
-  return Math.ceil(countWords(text) * 133 / 100);
-}
-function countWords(text) {
-  return text.split(/\s+/).filter((token) => token.length > 0).length;
-}
-function findDuplicateSections(markdown) {
-  const body = markdown.replace(FRONTMATTER_RE, "");
-  const seen = new Set;
-  const duplicates = [];
-  for (const line of body.split(`
-`)) {
-    const match = line.match(/^#{1,6}\s+(.+)$/);
-    if (!match)
-      continue;
-    const normalized = match[1].trim().toLowerCase();
-    if (seen.has(normalized)) {
-      if (!duplicates.includes(normalized))
-        duplicates.push(normalized);
-    } else {
-      seen.add(normalized);
-    }
-  }
-  return duplicates;
-}
-function countExamples(markdown) {
-  let count = 0;
-  for (const line of markdown.split(`
-`)) {
-    const trimmed = line.trim();
-    const isHeading = /^#{1,6}\s+/.test(trimmed);
-    const isBoldLabel = /^\*\*[^*]+\*\*/.test(trimmed);
-    if ((isHeading || isBoldLabel) && /example/i.test(trimmed))
-      count += 1;
-  }
-  return count;
-}
-function defaultBudgets() {
-  return {
-    skill_md: { warning_words: DEFAULT_SKILL_MD_WARNING_WORDS, error_words: null },
-    frequent_skill: { warning_words: DEFAULT_FREQUENT_SKILL_WARNING_WORDS },
-    reference_depth: { warning: DEFAULT_REFERENCE_DEPTH_WARNING }
-  };
-}
-function listFiles(dir) {
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const files = [];
-  for (const entry of entries) {
-    const path = join2(dir, entry.name);
-    if (entry.isDirectory())
-      files.push(...listFiles(path));
-    else if (entry.isFile())
-      files.push(path);
-  }
-  return files;
-}
-function depthUnder(root, file2) {
-  return relative(root, file2).split(sep).length;
-}
-function isEmptyDir(dir) {
-  if (!existsSync2(dir))
-    return false;
-  try {
-    return readdirSync(dir).length === 0;
-  } catch {
-    return false;
-  }
-}
-function lintSkillContext(skillPath, budgets) {
-  const skillMdPath = join2(skillPath, "SKILL.md");
-  if (!existsSync2(skillMdPath)) {
-    return {
-      checks: [
-        { check: "skill_md_exists", level: "error", message: "SKILL.md not found" }
-      ],
-      summary: { ok: 0, warning: 0, error: 1 }
-    };
-  }
-  let content;
-  try {
-    content = readFileSync2(skillMdPath, "utf-8");
-  } catch (error45) {
-    const detail = error45 instanceof Error ? error45.message : String(error45);
-    return {
-      checks: [
-        {
-          check: "skill_md_exists",
-          level: "error",
-          message: `Failed to read SKILL.md: ${detail}`
-        }
-      ],
-      summary: { ok: 0, warning: 0, error: 1 }
-    };
-  }
-  const defaults = defaultBudgets();
-  const skillBudget = { ...defaults.skill_md, ...budgets?.skill_md };
-  const frequentBudget = { ...defaults.frequent_skill, ...budgets?.frequent_skill };
-  const depthBudget = { ...defaults.reference_depth, ...budgets?.reference_depth };
-  const frontmatterMatch = content.match(FRONTMATTER_RE);
-  const frontmatterText = frontmatterMatch ? frontmatterMatch[1] : "";
-  const body = frontmatterMatch ? content.slice(frontmatterMatch[0].length) : content;
-  const checks3 = [];
-  checks3.push({
-    check: "skill_md_exists",
-    level: "ok",
-    message: "SKILL.md exists"
-  });
-  const frontmatterValid = content.startsWith("---") && frontmatterMatch !== null && /^name\s*:\s*\S/m.test(frontmatterText) && /^description\s*:\s*\S/m.test(frontmatterText);
-  checks3.push({
-    check: "frontmatter_valid",
-    level: frontmatterValid ? "ok" : "error",
-    message: frontmatterValid ? "Frontmatter present with name and description" : "Missing or invalid YAML frontmatter: SKILL.md must start with --- and define name and description"
-  });
-  const words = countWords(body);
-  const isFrequentLoading = /frequent:\s*true/.test(frontmatterText) || /load:\s*always/.test(frontmatterText);
-  const warningWords = isFrequentLoading ? frequentBudget.warning_words ?? DEFAULT_FREQUENT_SKILL_WARNING_WORDS : skillBudget.warning_words ?? DEFAULT_SKILL_MD_WARNING_WORDS;
-  if (typeof skillBudget.error_words === "number" && words > skillBudget.error_words) {
-    checks3.push({
-      check: "skill_md_words",
-      level: "error",
-      message: `SKILL.md body is ${words} words, exceeding the configured error budget of ${skillBudget.error_words} words`
-    });
-  } else if (words > warningWords) {
-    checks3.push({
-      check: "skill_md_words",
-      level: "warning",
-      message: `SKILL.md body is ${words} words (warning above ${warningWords}${isFrequentLoading ? ", frequent-loading skill" : ""}); consider moving content to references/`
-    });
-  } else {
-    checks3.push({
-      check: "skill_md_words",
-      level: "ok",
-      message: `SKILL.md body is ${words} words (budget ${warningWords})`
-    });
-  }
-  checks3.push({
-    check: "skill_md_tokens",
-    level: "ok",
-    message: `Estimated ~${estimateTokens(body)} tokens (${words} words; heuristic, not model-accurate)`
-  });
-  const referencesDir = join2(skillPath, "references");
-  const referenceFiles = listFiles(referencesDir);
-  if (referenceFiles.length > MAX_REFERENCE_FILES) {
-    checks3.push({
-      check: "references_count",
-      level: "warning",
-      message: `${referenceFiles.length} reference files in references/ (budget ${MAX_REFERENCE_FILES}); consider consolidating`
-    });
-  } else {
-    checks3.push({
-      check: "references_count",
-      level: "ok",
-      message: `${referenceFiles.length} reference file${referenceFiles.length === 1 ? "" : "s"} in references/`
-    });
-  }
-  const maxDepth = referenceFiles.reduce((max, file2) => Math.max(max, depthUnder(referencesDir, file2)), 0);
-  const depthLimit = depthBudget.warning ?? DEFAULT_REFERENCE_DEPTH_WARNING;
-  checks3.push({
-    check: "reference_depth",
-    level: maxDepth > depthLimit ? "warning" : "ok",
-    message: maxDepth > depthLimit ? `Reference nesting depth ${maxDepth} exceeds budget of ${depthLimit}; consider flattening` : `Reference nesting depth ${maxDepth} (budget ${depthLimit})`
-  });
-  let largest = null;
-  for (const file2 of referenceFiles) {
-    let fileWords = 0;
-    try {
-      fileWords = countWords(readFileSync2(file2, "utf-8"));
-    } catch {
-      fileWords = 0;
-    }
-    if (!largest || fileWords > largest.words) {
-      largest = { name: relative(referencesDir, file2), words: fileWords };
-    }
-  }
-  if (largest && largest.words > LARGEST_REFERENCE_WARNING_WORDS) {
-    checks3.push({
-      check: "largest_reference",
-      level: "warning",
-      message: `Largest reference ${largest.name} is ${largest.words} words (>${LARGEST_REFERENCE_WARNING_WORDS}); consider splitting it, and add a table of contents if it exceeds 300 lines`
-    });
-  } else {
-    checks3.push({
-      check: "largest_reference",
-      level: "ok",
-      message: largest ? `Largest reference is ${largest.name} (${largest.words} words)` : "No reference files"
-    });
-  }
-  const duplicates = findDuplicateSections(body);
-  if (duplicates.length > 0) {
-    const listed = duplicates.slice(0, MAX_DUPLICATES_LISTED).map((duplicate) => `"${duplicate}"`).join(", ");
-    const more = duplicates.length > MAX_DUPLICATES_LISTED ? ` (+${duplicates.length - MAX_DUPLICATES_LISTED} more)` : "";
-    checks3.push({
-      check: "duplicate_sections",
-      level: "warning",
-      message: `Duplicate section headings: ${listed}${more}`
-    });
-  } else {
-    checks3.push({
-      check: "duplicate_sections",
-      level: "ok",
-      message: "No duplicate section headings found"
-    });
-  }
-  const exampleCount = countExamples(body);
-  checks3.push({
-    check: "examples_count",
-    level: "ok",
-    message: `Found ${exampleCount} example heading${exampleCount === 1 ? "" : "s"}`
-  });
-  if (words > DEFAULT_SKILL_MD_WARNING_WORDS && referenceFiles.length < 2) {
-    checks3.push({
-      check: "progressive_disclosure",
-      level: "warning",
-      message: `SKILL.md body is ${words} words but references/ has ${referenceFiles.length} file${referenceFiles.length === 1 ? "" : "s"}; move long sections into references/ so the always-loaded body stays lean`
-    });
-  } else if (isEmptyDir(join2(skillPath, "scripts")) || isEmptyDir(join2(skillPath, "assets"))) {
-    checks3.push({
-      check: "progressive_disclosure",
-      level: "ok",
-      message: "scripts/ or assets/ exists but is empty; add content or remove the empty directory"
-    });
-  } else {
-    checks3.push({
-      check: "progressive_disclosure",
-      level: "ok",
-      message: "Progressive disclosure looks good"
-    });
-  }
-  const summary = { ok: 0, warning: 0, error: 0 };
-  for (const check2 of checks3)
-    summary[check2.level] += 1;
-  return { checks: checks3, summary };
-}
-
 // lib/utils.ts
-import { readFileSync as readFileSync3 } from "fs";
-import { join as join3 } from "path";
+import { readFileSync as readFileSync2 } from "fs";
+import { join as join2 } from "path";
 function parseSkillMd(skillPath) {
-  const content = readFileSync3(join3(skillPath, "SKILL.md"), "utf-8");
+  const content = readFileSync2(join2(skillPath, "SKILL.md"), "utf-8");
   const lines = content.split(`
 `);
   if (lines[0].trim() !== "---") {
@@ -12776,15 +12527,15 @@ function parseSkillMd(skillPath) {
 // lib/run-eval.ts
 import {
   cpSync,
-  existsSync as existsSync3,
+  existsSync as existsSync2,
   mkdirSync,
   mkdtempSync,
-  readdirSync as readdirSync2,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync
 } from "fs";
-import { dirname, join as join4, parse as parse5 } from "path";
+import { dirname, join as join3, parse as parse5 } from "path";
 import { randomBytes } from "crypto";
 import { tmpdir as osTmpdir } from "os";
 
@@ -12935,9 +12686,9 @@ function findProjectRoot(cwd) {
   let current = cwd ?? process.cwd();
   const { root } = parse5(current);
   while (true) {
-    if (existsSync3(join4(current, ".opencode")))
+    if (existsSync2(join3(current, ".opencode")))
       return current;
-    if (existsSync3(join4(current, ".claude")))
+    if (existsSync2(join3(current, ".claude")))
       return current;
     const parent = dirname(current);
     if (parent === current || parent === root)
@@ -12954,25 +12705,25 @@ function linkOrCopyConfigEntry(source, target, isDirectory) {
   }
 }
 function symlinkProjectOpenCodeConfig(projectRoot, evalRoot, skillName) {
-  const sourceOpenCode = join4(projectRoot, ".opencode");
-  if (!existsSync3(sourceOpenCode))
+  const sourceOpenCode = join3(projectRoot, ".opencode");
+  if (!existsSync2(sourceOpenCode))
     return;
-  const targetOpenCode = join4(evalRoot, ".opencode");
+  const targetOpenCode = join3(evalRoot, ".opencode");
   mkdirSync(targetOpenCode, { recursive: true });
-  for (const entry of readdirSync2(sourceOpenCode, { withFileTypes: true })) {
+  for (const entry of readdirSync(sourceOpenCode, { withFileTypes: true })) {
     if (entry.name === "skills")
       continue;
-    linkOrCopyConfigEntry(join4(sourceOpenCode, entry.name), join4(targetOpenCode, entry.name), entry.isDirectory());
+    linkOrCopyConfigEntry(join3(sourceOpenCode, entry.name), join3(targetOpenCode, entry.name), entry.isDirectory());
   }
-  const sourceSkills = join4(sourceOpenCode, "skills");
-  if (!existsSync3(sourceSkills))
+  const sourceSkills = join3(sourceOpenCode, "skills");
+  if (!existsSync2(sourceSkills))
     return;
-  const targetSkills = join4(targetOpenCode, "skills");
+  const targetSkills = join3(targetOpenCode, "skills");
   mkdirSync(targetSkills, { recursive: true });
-  for (const entry of readdirSync2(sourceSkills, { withFileTypes: true })) {
+  for (const entry of readdirSync(sourceSkills, { withFileTypes: true })) {
     if (entry.name === skillName)
       continue;
-    linkOrCopyConfigEntry(join4(sourceSkills, entry.name), join4(targetSkills, entry.name), entry.isDirectory());
+    linkOrCopyConfigEntry(join3(sourceSkills, entry.name), join3(targetSkills, entry.name), entry.isDirectory());
   }
 }
 async function runSingleQuery(query, skillName, skillDescription, timeout, projectRoot, agent, triggerOnly, model) {
@@ -12981,9 +12732,9 @@ async function runSingleQuery(query, skillName, skillDescription, timeout, proje
   }
   const uniqueId = randomBytes(4).toString("hex");
   const cleanName = `${skillName}-skill-${uniqueId}`;
-  const evalRoot = mkdtempSync(join4(osTmpdir(), "opencode-skill-eval-"));
-  const skillsDir = join4(evalRoot, ".opencode", "skills", cleanName);
-  const skillFile = join4(skillsDir, "SKILL.md");
+  const evalRoot = mkdtempSync(join3(osTmpdir(), "opencode-skill-eval-"));
+  const skillsDir = join3(evalRoot, ".opencode", "skills", cleanName);
+  const skillFile = join3(skillsDir, "SKILL.md");
   try {
     symlinkProjectOpenCodeConfig(projectRoot, evalRoot, skillName);
     mkdirSync(skillsDir, { recursive: true });
@@ -13065,7 +12816,7 @@ async function runSingleQuery(query, skillName, skillDescription, timeout, proje
     }
     return triggered;
   } finally {
-    if (existsSync3(evalRoot)) {
+    if (existsSync2(evalRoot)) {
       rmSync(evalRoot, { recursive: true, force: true });
     }
   }
@@ -13168,7 +12919,7 @@ async function runEval(opts) {
 
 // lib/improve-description.ts
 import { mkdirSync as mkdirSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
-import { join as join5 } from "path";
+import { join as join4 } from "path";
 import { tmpdir } from "os";
 import { randomBytes as randomBytes2 } from "crypto";
 
@@ -13208,7 +12959,7 @@ function formatFailureDiagnostics(diagnostics) {
 
 // lib/improve-description.ts
 async function callOpenCode(prompt, model, timeout = 300) {
-  const tmpPath = join5(tmpdir(), `skill-creator-${randomBytes2(6).toString("hex")}.md`);
+  const tmpPath = join4(tmpdir(), `skill-creator-${randomBytes2(6).toString("hex")}.md`);
   writeFileSync2(tmpPath, prompt);
   try {
     const cmd = ["opencode", "run", "--format", "json"];
@@ -13423,73 +13174,10 @@ Please respond with only the new description text in <new_description> tags, not
   transcript.final_description = description;
   if (logDir) {
     mkdirSync2(logDir, { recursive: true });
-    const logFile = join5(logDir, `improve_iter_${iteration ?? "unknown"}.json`);
+    const logFile = join4(logDir, `improve_iter_${iteration ?? "unknown"}.json`);
     writeFileSync2(logFile, JSON.stringify(transcript, null, 2));
   }
   return description;
-}
-
-// lib/instruction-usefulness.ts
-var MIN_RUNS_PER_SIDE = 5;
-var REMOVE_DELTA = 0.02;
-var KEEP_DELTA = 0.05;
-var NOOP_BASELINE = 0.95;
-var NOOP_MAX_DELTA = 0.03;
-function round4(value) {
-  const rounded = Math.round(value * 1e4) / 1e4;
-  return rounded === 0 ? 0 : rounded;
-}
-function formatDelta(delta) {
-  return `${delta >= 0 ? "+" : ""}${delta.toFixed(2)}`;
-}
-function assessInstructionUsefulness(input) {
-  const {
-    baseline_pass_rate,
-    with_instruction_pass_rate,
-    baseline_runs,
-    with_runs
-  } = input;
-  if (!Number.isFinite(baseline_pass_rate) || !Number.isFinite(with_instruction_pass_rate) || baseline_pass_rate < 0 || baseline_pass_rate > 1 || with_instruction_pass_rate < 0 || with_instruction_pass_rate > 1) {
-    throw new Error("pass rates must be between 0 and 1");
-  }
-  if (!Number.isInteger(baseline_runs) || !Number.isInteger(with_runs) || baseline_runs <= 0 || with_runs <= 0) {
-    throw new Error("run counts must be positive integers");
-  }
-  const instructionText = input.instruction_text?.trim() || undefined;
-  const delta = round4(with_instruction_pass_rate - baseline_pass_rate);
-  const sample_size = Math.min(baseline_runs, with_runs);
-  let recommendation;
-  let rationale;
-  if (sample_size < MIN_RUNS_PER_SIDE) {
-    recommendation = "insufficient-data";
-    rationale = `insufficient-data: sample too small to distinguish signal from noise (need at least ${MIN_RUNS_PER_SIDE} runs per side)`;
-  } else if (baseline_pass_rate >= NOOP_BASELINE && delta <= NOOP_MAX_DELTA) {
-    recommendation = "remove";
-    rationale = `remove: the agent already performs the behavior consistently without the instruction (delta ${formatDelta(delta)}); the instruction is a no-op`;
-  } else if (delta <= REMOVE_DELTA) {
-    recommendation = "remove";
-    rationale = instructionText ? `remove: instruction '${instructionText}' shows no meaningful behavioral change (delta ${formatDelta(delta)})` : `remove: delta ${formatDelta(delta)} or less does not justify the context cost of the instruction`;
-  } else if (delta >= KEEP_DELTA) {
-    recommendation = "keep";
-    rationale = `keep: instruction shows a meaningful behavioral improvement (delta ${formatDelta(delta)})`;
-  } else {
-    recommendation = "review";
-    rationale = `review: delta is between +0.02 and +0.05; run more samples or review the transcript quality before deciding`;
-  }
-  const result = {
-    baseline_pass_rate,
-    with_instruction_pass_rate,
-    delta,
-    baseline_runs,
-    with_runs,
-    sample_size,
-    recommendation,
-    rationale
-  };
-  if (instructionText) {
-    result.instruction_text = instructionText;
-  }
-  return result;
 }
 
 // lib/run-loop.ts
@@ -14007,8 +13695,8 @@ Exit reason: ${exitReason}`);
 }
 
 // lib/aggregate.ts
-import { existsSync as existsSync4, readFileSync as readFileSync4, readdirSync as readdirSync3, statSync } from "fs";
-import { join as join6, basename } from "path";
+import { existsSync as existsSync3, readFileSync as readFileSync3, readdirSync as readdirSync2, statSync } from "fs";
+import { join as join5, basename } from "path";
 function compareEvalIds(a, b) {
   const parseNumeric = (value) => {
     if (typeof value === "number" && Number.isFinite(value))
@@ -14074,17 +13762,17 @@ function calculateStats(values) {
   };
 }
 function sortedDirs(dir, pattern) {
-  if (!existsSync4(dir))
+  if (!existsSync3(dir))
     return [];
-  return readdirSync3(dir).filter((name) => {
-    const full = join6(dir, name);
+  return readdirSync2(dir).filter((name) => {
+    const full = join5(dir, name);
     return statSync(full).isDirectory() && (!pattern || pattern.test(name));
-  }).sort().map((name) => join6(dir, name));
+  }).sort().map((name) => join5(dir, name));
 }
 function loadRunResults(benchmarkDir) {
-  const runsDir = join6(benchmarkDir, "runs");
+  const runsDir = join5(benchmarkDir, "runs");
   let searchDir;
-  if (existsSync4(runsDir)) {
+  if (existsSync3(runsDir)) {
     searchDir = runsDir;
   } else if (sortedDirs(benchmarkDir, /^eval-/).length > 0) {
     searchDir = benchmarkDir;
@@ -14095,11 +13783,11 @@ function loadRunResults(benchmarkDir) {
   const results = {};
   const evalIds = new Set;
   for (const [evalIdx, evalDir] of sortedDirs(searchDir, /^eval-/).entries()) {
-    const metadataPath = join6(evalDir, "eval_metadata.json");
+    const metadataPath = join5(evalDir, "eval_metadata.json");
     let evalId = evalIdx;
-    if (existsSync4(metadataPath)) {
+    if (existsSync3(metadataPath)) {
       try {
-        const meta = JSON.parse(readFileSync4(metadataPath, "utf-8"));
+        const meta = JSON.parse(readFileSync3(metadataPath, "utf-8"));
         evalId = meta.eval_id ?? evalIdx;
       } catch {}
     } else {
@@ -14122,14 +13810,14 @@ function loadRunResults(benchmarkDir) {
           continue;
         }
         const runNumber = parsedRunNumber;
-        const gradingFile = join6(runDir, "grading.json");
-        if (!existsSync4(gradingFile)) {
+        const gradingFile = join5(runDir, "grading.json");
+        if (!existsSync3(gradingFile)) {
           console.error(`Warning: grading.json not found in ${runDir}`);
           continue;
         }
         let grading;
         try {
-          grading = JSON.parse(readFileSync4(gradingFile, "utf-8"));
+          grading = JSON.parse(readFileSync3(gradingFile, "utf-8"));
         } catch (e) {
           console.error(`Warning: Invalid JSON in ${gradingFile}: ${e}`);
           continue;
@@ -14151,10 +13839,10 @@ function loadRunResults(benchmarkDir) {
         };
         const timing = grading.timing ?? {};
         result.time_seconds = timing.total_duration_seconds ?? 0;
-        const timingFile = join6(runDir, "timing.json");
-        if (result.time_seconds === 0 && existsSync4(timingFile)) {
+        const timingFile = join5(runDir, "timing.json");
+        if (result.time_seconds === 0 && existsSync3(timingFile)) {
           try {
-            const timingData = JSON.parse(readFileSync4(timingFile, "utf-8"));
+            const timingData = JSON.parse(readFileSync3(timingFile, "utf-8"));
             result.time_seconds = timingData.total_duration_seconds ?? 0;
             result.tokens = timingData.total_tokens ?? 0;
           } catch {}
@@ -14314,15 +14002,15 @@ function generateMarkdown(benchmark) {
 // lib/review-server.ts
 import { spawn as spawn2 } from "child_process";
 import {
-  existsSync as existsSync5,
+  existsSync as existsSync4,
   mkdirSync as mkdirSync3,
-  readFileSync as readFileSync5,
-  readdirSync as readdirSync4,
+  readFileSync as readFileSync4,
+  readdirSync as readdirSync3,
   statSync as statSync2,
   writeFileSync as writeFileSync5
 } from "fs";
 import { createServer } from "http";
-import { basename as basename2, extname, join as join7, relative as relative2 } from "path";
+import { basename as basename2, extname, join as join6, relative } from "path";
 var METADATA_FILES = new Set(["transcript.md", "user_notes.md", "metrics.json"]);
 var TEXT_EXTENSIONS = new Set([
   ".txt",
@@ -14389,7 +14077,7 @@ function embedFile(filePath) {
   const mime = getMimeType(filePath);
   if (TEXT_EXTENSIONS.has(ext)) {
     try {
-      const content = readFileSync5(filePath, "utf-8");
+      const content = readFileSync4(filePath, "utf-8");
       return { name, type: "text", content };
     } catch {
       return { name, type: "error", content: "(Error reading file)" };
@@ -14397,7 +14085,7 @@ function embedFile(filePath) {
   }
   if (IMAGE_EXTENSIONS.has(ext)) {
     try {
-      const raw = readFileSync5(filePath);
+      const raw = readFileSync4(filePath);
       const b64 = raw.toString("base64");
       return { name, type: "image", mime, data_uri: `data:${mime};base64,${b64}` };
     } catch {
@@ -14406,7 +14094,7 @@ function embedFile(filePath) {
   }
   if (ext === ".pdf") {
     try {
-      const raw = readFileSync5(filePath);
+      const raw = readFileSync4(filePath);
       const b64 = raw.toString("base64");
       return { name, type: "pdf", data_uri: `data:${mime};base64,${b64}` };
     } catch {
@@ -14415,7 +14103,7 @@ function embedFile(filePath) {
   }
   if (ext === ".xlsx") {
     try {
-      const raw = readFileSync5(filePath);
+      const raw = readFileSync4(filePath);
       const b64 = raw.toString("base64");
       return { name, type: "xlsx", data_b64: b64 };
     } catch {
@@ -14423,7 +14111,7 @@ function embedFile(filePath) {
     }
   }
   try {
-    const raw = readFileSync5(filePath);
+    const raw = readFileSync4(filePath);
     const b64 = raw.toString("base64");
     return { name, type: "binary", mime, data_uri: `data:${mime};base64,${b64}` };
   } catch {
@@ -14431,19 +14119,19 @@ function embedFile(filePath) {
   }
 }
 function findRunsRecursive(root, current, runs) {
-  if (!existsSync5(current) || !statSync2(current).isDirectory())
+  if (!existsSync4(current) || !statSync2(current).isDirectory())
     return;
-  const outputsDir = join7(current, "outputs");
-  if (existsSync5(outputsDir) && statSync2(outputsDir).isDirectory()) {
+  const outputsDir = join6(current, "outputs");
+  if (existsSync4(outputsDir) && statSync2(outputsDir).isDirectory()) {
     const run = buildRun(root, current);
     if (run)
       runs.push(run);
     return;
   }
   const skip = new Set(["node_modules", ".git", "__pycache__", "skill", "inputs"]);
-  const entries = readdirSync4(current).sort();
+  const entries = readdirSync3(current).sort();
   for (const entry of entries) {
-    const full = join7(current, entry);
+    const full = join6(current, entry);
     if (statSync2(full).isDirectory() && !skip.has(entry)) {
       findRunsRecursive(root, full, runs);
     }
@@ -14464,10 +14152,10 @@ function findRuns(workspace) {
 function buildRun(root, runDir) {
   let prompt = "";
   let evalId = null;
-  for (const candidate of [join7(runDir, "eval_metadata.json"), join7(runDir, "..", "eval_metadata.json")]) {
-    if (existsSync5(candidate)) {
+  for (const candidate of [join6(runDir, "eval_metadata.json"), join6(runDir, "..", "eval_metadata.json")]) {
+    if (existsSync4(candidate)) {
       try {
-        const metadata = JSON.parse(readFileSync5(candidate, "utf-8"));
+        const metadata = JSON.parse(readFileSync4(candidate, "utf-8"));
         prompt = metadata.prompt ?? "";
         evalId = metadata.eval_id ?? null;
       } catch {}
@@ -14476,10 +14164,10 @@ function buildRun(root, runDir) {
     }
   }
   if (!prompt) {
-    for (const candidate of [join7(runDir, "transcript.md"), join7(runDir, "outputs", "transcript.md")]) {
-      if (existsSync5(candidate)) {
+    for (const candidate of [join6(runDir, "transcript.md"), join6(runDir, "outputs", "transcript.md")]) {
+      if (existsSync4(candidate)) {
         try {
-          const text = readFileSync5(candidate, "utf-8");
+          const text = readFileSync4(candidate, "utf-8");
           const match = text.match(/## Eval Prompt\n\n([\s\S]*?)(?=\n##|$)/);
           if (match)
             prompt = match[1].trim();
@@ -14491,23 +14179,23 @@ function buildRun(root, runDir) {
   }
   if (!prompt)
     prompt = "(No prompt found)";
-  const runId = relative2(root, runDir).replace(/[/\\]/g, "-");
-  const outputsDir = join7(runDir, "outputs");
+  const runId = relative(root, runDir).replace(/[/\\]/g, "-");
+  const outputsDir = join6(runDir, "outputs");
   const outputFiles = [];
-  if (existsSync5(outputsDir) && statSync2(outputsDir).isDirectory()) {
-    const files = readdirSync4(outputsDir).sort();
+  if (existsSync4(outputsDir) && statSync2(outputsDir).isDirectory()) {
+    const files = readdirSync3(outputsDir).sort();
     for (const f of files) {
-      const full = join7(outputsDir, f);
+      const full = join6(outputsDir, f);
       if (statSync2(full).isFile() && !METADATA_FILES.has(f)) {
         outputFiles.push(embedFile(full));
       }
     }
   }
   let grading = null;
-  for (const candidate of [join7(runDir, "grading.json"), join7(runDir, "..", "grading.json")]) {
-    if (existsSync5(candidate)) {
+  for (const candidate of [join6(runDir, "grading.json"), join6(runDir, "..", "grading.json")]) {
+    if (existsSync4(candidate)) {
       try {
-        grading = JSON.parse(readFileSync5(candidate, "utf-8"));
+        grading = JSON.parse(readFileSync4(candidate, "utf-8"));
       } catch {}
       if (grading)
         break;
@@ -14543,10 +14231,10 @@ function isValidFeedbackPayload(value) {
 function loadPreviousIteration(workspace) {
   const result = {};
   const feedbackMap = {};
-  const feedbackPath = join7(workspace, "feedback.json");
-  if (existsSync5(feedbackPath)) {
+  const feedbackPath = join6(workspace, "feedback.json");
+  if (existsSync4(feedbackPath)) {
     try {
-      const data = JSON.parse(readFileSync5(feedbackPath, "utf-8"));
+      const data = JSON.parse(readFileSync4(feedbackPath, "utf-8"));
       for (const r of data.reviews ?? []) {
         if (r.feedback?.trim()) {
           feedbackMap[r.run_id] = r.feedback;
@@ -14570,7 +14258,7 @@ function loadPreviousIteration(workspace) {
 }
 function generateReviewHtml(opts) {
   const { runs, skillName, previous, benchmark, templatePath } = opts;
-  const template = readFileSync5(templatePath, "utf-8");
+  const template = readFileSync4(templatePath, "utf-8");
   const previousFeedback = {};
   const previousOutputs = {};
   if (previous) {
@@ -14679,9 +14367,9 @@ async function handleReviewRequest(method, requestUrl, requestBody, context) {
   if (method === "GET" && (url2.pathname === "/" || url2.pathname === "/index.html")) {
     const runs = findRuns(context.workspace);
     let benchmark = null;
-    if (context.benchmarkPath && existsSync5(context.benchmarkPath)) {
+    if (context.benchmarkPath && existsSync4(context.benchmarkPath)) {
       try {
-        benchmark = JSON.parse(readFileSync5(context.benchmarkPath, "utf-8"));
+        benchmark = JSON.parse(readFileSync4(context.benchmarkPath, "utf-8"));
       } catch {}
     }
     const html = generateReviewHtml({
@@ -14695,9 +14383,9 @@ async function handleReviewRequest(method, requestUrl, requestBody, context) {
   }
   if (method === "GET" && url2.pathname === "/api/feedback") {
     let data = "{}";
-    if (existsSync5(context.feedbackPath)) {
+    if (existsSync4(context.feedbackPath)) {
       try {
-        data = readFileSync5(context.feedbackPath, "utf-8");
+        data = readFileSync4(context.feedbackPath, "utf-8");
       } catch {}
     }
     return textResponse(data, 200, "application/json");
@@ -14774,13 +14462,13 @@ async function serveReview(opts) {
     templatePath,
     openBrowser = true
   } = opts;
-  if (!existsSync5(workspace) || !statSync2(workspace).isDirectory()) {
+  if (!existsSync4(workspace) || !statSync2(workspace).isDirectory()) {
     throw new Error(`Workspace is not a directory: ${workspace}`);
   }
   const skillName = skillNameOpt ?? basename2(workspace).replace(/-workspace$/, "");
-  const feedbackPath = join7(workspace, "feedback.json");
+  const feedbackPath = join6(workspace, "feedback.json");
   let previous = null;
-  if (previousWorkspace && existsSync5(previousWorkspace)) {
+  if (previousWorkspace && existsSync4(previousWorkspace)) {
     previous = loadPreviousIteration(previousWorkspace);
   }
   await killPort(port);
@@ -14841,13 +14529,13 @@ function exportStaticReview(opts) {
     throw new Error(`No runs found in ${workspace}`);
   }
   let previous = null;
-  if (previousWorkspace && existsSync5(previousWorkspace)) {
+  if (previousWorkspace && existsSync4(previousWorkspace)) {
     previous = loadPreviousIteration(previousWorkspace);
   }
   let benchmark = null;
-  if (benchmarkPath && existsSync5(benchmarkPath)) {
+  if (benchmarkPath && existsSync4(benchmarkPath)) {
     try {
-      benchmark = JSON.parse(readFileSync5(benchmarkPath, "utf-8"));
+      benchmark = JSON.parse(readFileSync4(benchmarkPath, "utf-8"));
     } catch {}
   }
   const html = generateReviewHtml({
@@ -14857,31 +14545,31 @@ function exportStaticReview(opts) {
     benchmark,
     templatePath
   });
-  const parentDir = join7(outputPath, "..");
+  const parentDir = join6(outputPath, "..");
   mkdirSync3(parentDir, { recursive: true });
   writeFileSync5(outputPath, html);
   return outputPath;
 }
 
 // lib/workflow-guard.ts
-import { existsSync as existsSync6, readdirSync as readdirSync5, statSync as statSync3 } from "fs";
-import { basename as basename3, join as join8 } from "path";
+import { existsSync as existsSync5, readdirSync as readdirSync4, statSync as statSync3 } from "fs";
+import { basename as basename3, join as join7 } from "path";
 function sortedDirs2(dir, pattern) {
-  if (!existsSync6(dir) || !statSync3(dir).isDirectory())
+  if (!existsSync5(dir) || !statSync3(dir).isDirectory())
     return [];
-  return readdirSync5(dir).map((name) => join8(dir, name)).filter((full) => statSync3(full).isDirectory()).filter((full) => pattern ? pattern.test(basename3(full)) : true).sort();
+  return readdirSync4(dir).map((name) => join7(dir, name)).filter((full) => statSync3(full).isDirectory()).filter((full) => pattern ? pattern.test(basename3(full)) : true).sort();
 }
 function hasAtLeastOneRun(configDir) {
   const runDirs = sortedDirs2(configDir, /^run-/);
   if (runDirs.length > 0)
     return true;
-  const outputsDir = join8(configDir, "outputs");
-  return existsSync6(outputsDir) && statSync3(outputsDir).isDirectory();
+  const outputsDir = join7(configDir, "outputs");
+  return existsSync5(outputsDir) && statSync3(outputsDir).isDirectory();
 }
 function validateComparisonWorkspace(workspace) {
   const issues = [];
   const foundConfigs = new Set;
-  if (!existsSync6(workspace)) {
+  if (!existsSync5(workspace)) {
     return {
       valid: false,
       evalCount: 0,
@@ -14912,7 +14600,7 @@ function validateComparisonWorkspace(workspace) {
   let searchRoot = workspace;
   let evalDirs = sortedDirs2(searchRoot, /^eval-/);
   if (evalDirs.length === 0) {
-    const runsRoot = join8(workspace, "runs");
+    const runsRoot = join7(workspace, "runs");
     const nested = sortedDirs2(runsRoot, /^eval-/);
     if (nested.length > 0) {
       searchRoot = runsRoot;
@@ -14926,21 +14614,21 @@ function validateComparisonWorkspace(workspace) {
     });
   }
   for (const evalDir of evalDirs) {
-    const withSkillDir = join8(evalDir, "with_skill");
-    const withoutSkillDir = join8(evalDir, "without_skill");
-    const oldSkillDir = join8(evalDir, "old_skill");
-    if (existsSync6(withSkillDir) && statSync3(withSkillDir).isDirectory()) {
+    const withSkillDir = join7(evalDir, "with_skill");
+    const withoutSkillDir = join7(evalDir, "without_skill");
+    const oldSkillDir = join7(evalDir, "old_skill");
+    if (existsSync5(withSkillDir) && statSync3(withSkillDir).isDirectory()) {
       foundConfigs.add("with_skill");
     }
-    if (existsSync6(withoutSkillDir) && statSync3(withoutSkillDir).isDirectory()) {
+    if (existsSync5(withoutSkillDir) && statSync3(withoutSkillDir).isDirectory()) {
       foundConfigs.add("without_skill");
     }
-    if (existsSync6(oldSkillDir) && statSync3(oldSkillDir).isDirectory()) {
+    if (existsSync5(oldSkillDir) && statSync3(oldSkillDir).isDirectory()) {
       foundConfigs.add("old_skill");
     }
-    const hasWithSkill = existsSync6(withSkillDir) && statSync3(withSkillDir).isDirectory() && hasAtLeastOneRun(withSkillDir);
-    const hasWithoutSkill = existsSync6(withoutSkillDir) && statSync3(withoutSkillDir).isDirectory() && hasAtLeastOneRun(withoutSkillDir);
-    const hasOldSkill = existsSync6(oldSkillDir) && statSync3(oldSkillDir).isDirectory() && hasAtLeastOneRun(oldSkillDir);
+    const hasWithSkill = existsSync5(withSkillDir) && statSync3(withSkillDir).isDirectory() && hasAtLeastOneRun(withSkillDir);
+    const hasWithoutSkill = existsSync5(withoutSkillDir) && statSync3(withoutSkillDir).isDirectory() && hasAtLeastOneRun(withoutSkillDir);
+    const hasOldSkill = existsSync5(oldSkillDir) && statSync3(oldSkillDir).isDirectory() && hasAtLeastOneRun(oldSkillDir);
     if (!hasWithSkill) {
       issues.push({
         evalDir: basename3(evalDir),
@@ -14965,19 +14653,19 @@ function validateComparisonWorkspace(workspace) {
 
 // lib/gold-standards.ts
 import {
-  existsSync as existsSync7,
+  existsSync as existsSync6,
   mkdirSync as mkdirSync4,
-  readFileSync as readFileSync6,
+  readFileSync as readFileSync5,
   renameSync,
   writeFileSync as writeFileSync6
 } from "fs";
 import { randomUUID } from "crypto";
-import { basename as basename4, dirname as dirname2, join as join9 } from "path";
+import { basename as basename4, dirname as dirname2, join as join8 } from "path";
 function readStore(path) {
-  if (!existsSync7(path))
+  if (!existsSync6(path))
     return [];
   try {
-    return JSON.parse(readFileSync6(path, "utf-8"));
+    return JSON.parse(readFileSync5(path, "utf-8"));
   } catch (error45) {
     if (error45 instanceof SyntaxError) {
       throw new Error(`Failed to read gold standards store at ${path}: malformed JSON`);
@@ -14991,7 +14679,7 @@ function sortStandards(standards) {
 function writeStore(path, standards) {
   const dir = dirname2(path);
   mkdirSync4(dir, { recursive: true });
-  const tmpPath = join9(dir, `.${basename4(path)}.${process.pid}.${Date.now()}.tmp`);
+  const tmpPath = join8(dir, `.${basename4(path)}.${process.pid}.${Date.now()}.tmp`);
   writeFileSync6(tmpPath, JSON.stringify(sortStandards(standards).slice(0, 50), null, 2));
   renameSync(tmpPath, path);
 }
@@ -15034,24 +14722,24 @@ function getGoldAdvice(path) {
 // lib/skill-install.ts
 import {
   copyFileSync,
-  existsSync as existsSync8,
+  existsSync as existsSync7,
   mkdirSync as mkdirSync5,
-  readdirSync as readdirSync6,
-  readFileSync as readFileSync7,
+  readdirSync as readdirSync5,
+  readFileSync as readFileSync6,
   renameSync as renameSync2,
   rmSync as rmSync2,
   statSync as statSync4,
   writeFileSync as writeFileSync7
 } from "fs";
-import { join as join10 } from "path";
+import { join as join9 } from "path";
 var SKILL_NAME = "opencode-skill-creator";
 var LEGACY_SKILL_NAME = "skill-creator";
 var INSTALL_VERSION_FILE = ".opencode-skill-creator-version";
 function copyDirRecursive(src, dest) {
   mkdirSync5(dest, { recursive: true });
-  for (const entry of readdirSync6(src)) {
-    const srcPath = join10(src, entry);
-    const destPath = join10(dest, entry);
+  for (const entry of readdirSync5(src)) {
+    const srcPath = join9(src, entry);
+    const destPath = join9(dest, entry);
     if (statSync4(srcPath).isDirectory()) {
       copyDirRecursive(srcPath, destPath);
     } else {
@@ -15063,61 +14751,61 @@ function defaultBackupTimestamp() {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "");
 }
 function uniqueBackupDir(skillsRoot, timestamp) {
-  const base = join10(skillsRoot, `${LEGACY_SKILL_NAME}.opencode-skill-creator-backup-${timestamp}`);
-  if (!existsSync8(base))
+  const base = join9(skillsRoot, `${LEGACY_SKILL_NAME}.opencode-skill-creator-backup-${timestamp}`);
+  if (!existsSync7(base))
     return base;
   for (let index = 1;index < 1000; index += 1) {
     const candidate = `${base}-${index}`;
-    if (!existsSync8(candidate))
+    if (!existsSync7(candidate))
       return candidate;
   }
   throw new Error("Could not find an available legacy skill backup path");
 }
 function archiveLegacySkill(args) {
-  const legacyVersionFile = join10(args.legacySkillDir, INSTALL_VERSION_FILE);
-  if (!existsSync8(legacyVersionFile))
+  const legacyVersionFile = join9(args.legacySkillDir, INSTALL_VERSION_FILE);
+  if (!existsSync7(legacyVersionFile))
     return;
   const backupDir = uniqueBackupDir(args.skillsRoot, args.backupTimestamp());
-  const backupSkillFile = join10(args.legacySkillDir, "SKILL.md");
-  if (existsSync8(backupSkillFile)) {
-    renameSync2(backupSkillFile, join10(args.legacySkillDir, "SKILL.md.backup"));
+  const backupSkillFile = join9(args.legacySkillDir, "SKILL.md");
+  if (existsSync7(backupSkillFile)) {
+    renameSync2(backupSkillFile, join9(args.legacySkillDir, "SKILL.md.backup"));
   }
   renameSync2(args.legacySkillDir, backupDir);
 }
 function ensureBundledSkillInstalled(options) {
-  const skillsRoot = join10(options.configDir, "opencode", "skills");
-  const skillsDir = join10(skillsRoot, SKILL_NAME);
-  const legacySkillDir = join10(skillsRoot, LEGACY_SKILL_NAME);
-  const marker = join10(skillsDir, "SKILL.md");
-  const versionFile = join10(skillsDir, INSTALL_VERSION_FILE);
-  const userSkillFile = join10(skillsDir, "SKILL.md");
-  const userSkillBackup = join10(skillsDir, "SKILL.md.user-backup");
-  if (!existsSync8(options.bundledSkillDir))
+  const skillsRoot = join9(options.configDir, "opencode", "skills");
+  const skillsDir = join9(skillsRoot, SKILL_NAME);
+  const legacySkillDir = join9(skillsRoot, LEGACY_SKILL_NAME);
+  const marker = join9(skillsDir, "SKILL.md");
+  const versionFile = join9(skillsDir, INSTALL_VERSION_FILE);
+  const userSkillFile = join9(skillsDir, "SKILL.md");
+  const userSkillBackup = join9(skillsDir, "SKILL.md.user-backup");
+  if (!existsSync7(options.bundledSkillDir))
     return;
   let installedVersion = "";
-  if (existsSync8(versionFile)) {
+  if (existsSync7(versionFile)) {
     try {
-      installedVersion = readFileSync7(versionFile, "utf-8").trim();
+      installedVersion = readFileSync6(versionFile, "utf-8").trim();
     } catch {
       installedVersion = "";
     }
   }
-  const shouldInstall = !existsSync8(marker) || installedVersion !== options.packageVersion;
+  const shouldInstall = !existsSync7(marker) || installedVersion !== options.packageVersion;
   const tmpInstallDir = `${skillsDir}.tmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   try {
     if (shouldInstall) {
       copyDirRecursive(options.bundledSkillDir, tmpInstallDir);
-      if (existsSync8(userSkillFile)) {
+      if (existsSync7(userSkillFile)) {
         try {
           copyFileSync(userSkillFile, userSkillBackup);
         } catch (error45) {
           options.onError?.(`Failed to back up existing user skill file before updating ${SKILL_NAME}`, error45);
         }
         try {
-          copyFileSync(userSkillFile, join10(tmpInstallDir, "SKILL.md"));
+          copyFileSync(userSkillFile, join9(tmpInstallDir, "SKILL.md"));
         } catch {}
       }
-      if (!existsSync8(skillsDir)) {
+      if (!existsSync7(skillsDir)) {
         renameSync2(tmpInstallDir, skillsDir);
       } else {
         copyDirRecursive(tmpInstallDir, skillsDir);
@@ -15125,7 +14813,7 @@ function ensureBundledSkillInstalled(options) {
       writeFileSync7(versionFile, `${options.packageVersion}
 `);
     }
-    if (existsSync8(legacySkillDir)) {
+    if (existsSync7(legacySkillDir)) {
       archiveLegacySkill({
         skillsRoot,
         legacySkillDir,
@@ -15135,10 +14823,285 @@ function ensureBundledSkillInstalled(options) {
   } catch (error45) {
     options.onError?.("Failed to install opencode-skill-creator skill", error45);
   } finally {
-    if (existsSync8(tmpInstallDir)) {
+    if (existsSync7(tmpInstallDir)) {
       rmSync2(tmpInstallDir, { recursive: true, force: true });
     }
   }
+}
+
+// lib/context-budget.ts
+import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync7 } from "fs";
+import { join as join10, relative as relative2, sep } from "path";
+var DEFAULT_SKILL_MD_WARNING_WORDS = 500;
+var DEFAULT_FREQUENT_SKILL_WARNING_WORDS = 250;
+var DEFAULT_REFERENCE_DEPTH_WARNING = 2;
+var LARGEST_REFERENCE_WARNING_WORDS = 1500;
+var MAX_REFERENCE_FILES = 5;
+var MAX_DUPLICATES_LISTED = 3;
+var FRONTMATTER_RE = /^---\n([\s\S]*?)\n---/;
+function estimateTokens(text) {
+  return Math.ceil(countWords(text) * 133 / 100);
+}
+function countWords(text) {
+  return text.split(/\s+/).filter((token) => token.length > 0).length;
+}
+function findDuplicateSections(markdown) {
+  const body = markdown.replace(FRONTMATTER_RE, "");
+  const seen = new Set;
+  const duplicates = [];
+  for (const line of body.split(`
+`)) {
+    const match = line.match(/^#{1,6}\s+(.+)$/);
+    if (!match)
+      continue;
+    const normalized = match[1].trim().toLowerCase();
+    if (seen.has(normalized)) {
+      if (!duplicates.includes(normalized))
+        duplicates.push(normalized);
+    } else {
+      seen.add(normalized);
+    }
+  }
+  return duplicates;
+}
+function countExamples(markdown) {
+  let count = 0;
+  for (const line of markdown.split(`
+`)) {
+    const trimmed = line.trim();
+    const isHeading = /^#{1,6}\s+/.test(trimmed);
+    const isBoldLabel = /^\*\*[^*]+\*\*/.test(trimmed);
+    if ((isHeading || isBoldLabel) && /example/i.test(trimmed))
+      count += 1;
+  }
+  return count;
+}
+function defaultBudgets() {
+  return {
+    skill_md: { warning_words: DEFAULT_SKILL_MD_WARNING_WORDS, error_words: null },
+    frequent_skill: { warning_words: DEFAULT_FREQUENT_SKILL_WARNING_WORDS },
+    reference_depth: { warning: DEFAULT_REFERENCE_DEPTH_WARNING }
+  };
+}
+function listFiles(dir) {
+  let entries;
+  try {
+    entries = readdirSync6(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files = [];
+  for (const entry of entries) {
+    const path = join10(dir, entry.name);
+    if (entry.isDirectory())
+      files.push(...listFiles(path));
+    else if (entry.isFile())
+      files.push(path);
+  }
+  return files;
+}
+function depthUnder(root, file2) {
+  return relative2(root, file2).split(sep).length;
+}
+function isEmptyDir(dir) {
+  if (!existsSync8(dir))
+    return false;
+  try {
+    return readdirSync6(dir).length === 0;
+  } catch {
+    return false;
+  }
+}
+function lintSkillContext(skillPath, budgets) {
+  const skillMdPath = join10(skillPath, "SKILL.md");
+  if (!existsSync8(skillMdPath)) {
+    return {
+      checks: [
+        { check: "skill_md_exists", level: "error", message: "SKILL.md not found" }
+      ],
+      summary: { ok: 0, warning: 0, error: 1 }
+    };
+  }
+  let content;
+  try {
+    content = readFileSync7(skillMdPath, "utf-8");
+  } catch (error45) {
+    const detail = error45 instanceof Error ? error45.message : String(error45);
+    return {
+      checks: [
+        {
+          check: "skill_md_exists",
+          level: "error",
+          message: `Failed to read SKILL.md: ${detail}`
+        }
+      ],
+      summary: { ok: 0, warning: 0, error: 1 }
+    };
+  }
+  const defaults = defaultBudgets();
+  const skillBudget = { ...defaults.skill_md, ...budgets?.skill_md };
+  const frequentBudget = { ...defaults.frequent_skill, ...budgets?.frequent_skill };
+  const depthBudget = { ...defaults.reference_depth, ...budgets?.reference_depth };
+  const frontmatterMatch = content.match(FRONTMATTER_RE);
+  const frontmatterText = frontmatterMatch ? frontmatterMatch[1] : "";
+  const body = frontmatterMatch ? content.slice(frontmatterMatch[0].length) : content;
+  const checks3 = [];
+  checks3.push({
+    check: "skill_md_exists",
+    level: "ok",
+    message: "SKILL.md exists"
+  });
+  const frontmatterValid = content.startsWith("---") && frontmatterMatch !== null && /^name\s*:\s*\S/m.test(frontmatterText) && /^description\s*:\s*\S/m.test(frontmatterText);
+  checks3.push({
+    check: "frontmatter_valid",
+    level: frontmatterValid ? "ok" : "error",
+    message: frontmatterValid ? "Frontmatter present with name and description" : "Missing or invalid YAML frontmatter: SKILL.md must start with --- and define name and description"
+  });
+  if (frontmatterValid) {
+    const descriptionMatch = frontmatterText.match(/^description\s*:\s*(.+)$/m);
+    const descriptionValue = descriptionMatch ? descriptionMatch[1].trim().replace(/^["']+|["']+$/g, "").trim() : "";
+    if (!descriptionMatch || descriptionValue === "" || /^[|>]-?$/.test(descriptionValue)) {
+      checks3.push({
+        check: "description_trigger",
+        level: "ok",
+        message: "Description is not a single-line value; cannot advisory-check when the skill triggers"
+      });
+    } else {
+      const descriptionWords = countWords(descriptionValue);
+      if (descriptionWords < 6) {
+        checks3.push({
+          check: "description_trigger",
+          level: "warning",
+          message: `description may not clearly describe WHEN the skill should trigger (only ${descriptionWords} words)`
+        });
+      } else {
+        checks3.push({
+          check: "description_trigger",
+          level: "ok",
+          message: `Description has ${descriptionWords} words describing when the skill should trigger`
+        });
+      }
+    }
+  }
+  const words = countWords(body);
+  const isFrequentLoading = /frequent:\s*true/.test(frontmatterText) || /load:\s*always/.test(frontmatterText);
+  const warningWords = isFrequentLoading ? frequentBudget.warning_words ?? DEFAULT_FREQUENT_SKILL_WARNING_WORDS : skillBudget.warning_words ?? DEFAULT_SKILL_MD_WARNING_WORDS;
+  if (typeof skillBudget.error_words === "number" && words > skillBudget.error_words) {
+    checks3.push({
+      check: "skill_md_words",
+      level: "error",
+      message: `SKILL.md body is ${words} words, exceeding the configured error budget of ${skillBudget.error_words} words`
+    });
+  } else if (words > warningWords) {
+    checks3.push({
+      check: "skill_md_words",
+      level: "warning",
+      message: `SKILL.md body is ${words} words (warning above ${warningWords}${isFrequentLoading ? ", frequent-loading skill" : ""}); consider moving content to references/`
+    });
+  } else {
+    checks3.push({
+      check: "skill_md_words",
+      level: "ok",
+      message: `SKILL.md body is ${words} words (budget ${warningWords})`
+    });
+  }
+  checks3.push({
+    check: "skill_md_tokens",
+    level: "ok",
+    message: `Estimated ~${estimateTokens(body)} tokens (${words} words; heuristic, not model-accurate)`
+  });
+  const referencesDir = join10(skillPath, "references");
+  const referenceFiles = listFiles(referencesDir);
+  if (referenceFiles.length > MAX_REFERENCE_FILES) {
+    checks3.push({
+      check: "references_count",
+      level: "warning",
+      message: `${referenceFiles.length} reference files in references/ (budget ${MAX_REFERENCE_FILES}); consider consolidating`
+    });
+  } else {
+    checks3.push({
+      check: "references_count",
+      level: "ok",
+      message: `${referenceFiles.length} reference file${referenceFiles.length === 1 ? "" : "s"} in references/`
+    });
+  }
+  const maxDepth = referenceFiles.reduce((max, file2) => Math.max(max, depthUnder(referencesDir, file2)), 0);
+  const depthLimit = depthBudget.warning ?? DEFAULT_REFERENCE_DEPTH_WARNING;
+  checks3.push({
+    check: "reference_depth",
+    level: maxDepth > depthLimit ? "warning" : "ok",
+    message: maxDepth > depthLimit ? `Reference nesting depth ${maxDepth} exceeds budget of ${depthLimit}; consider flattening` : `Reference nesting depth ${maxDepth} (budget ${depthLimit})`
+  });
+  let largest = null;
+  for (const file2 of referenceFiles) {
+    let fileWords = 0;
+    try {
+      fileWords = countWords(readFileSync7(file2, "utf-8"));
+    } catch {
+      fileWords = 0;
+    }
+    if (!largest || fileWords > largest.words) {
+      largest = { name: relative2(referencesDir, file2), words: fileWords };
+    }
+  }
+  if (largest && largest.words > LARGEST_REFERENCE_WARNING_WORDS) {
+    checks3.push({
+      check: "largest_reference",
+      level: "warning",
+      message: `Largest reference ${largest.name} is ${largest.words} words (>${LARGEST_REFERENCE_WARNING_WORDS}); consider splitting it, and add a table of contents if it exceeds 300 lines`
+    });
+  } else {
+    checks3.push({
+      check: "largest_reference",
+      level: "ok",
+      message: largest ? `Largest reference is ${largest.name} (${largest.words} words)` : "No reference files"
+    });
+  }
+  const duplicates = findDuplicateSections(body);
+  if (duplicates.length > 0) {
+    const listed = duplicates.slice(0, MAX_DUPLICATES_LISTED).map((duplicate) => `"${duplicate}"`).join(", ");
+    const more = duplicates.length > MAX_DUPLICATES_LISTED ? ` (+${duplicates.length - MAX_DUPLICATES_LISTED} more)` : "";
+    checks3.push({
+      check: "duplicate_sections",
+      level: "warning",
+      message: `Duplicate section headings: ${listed}${more}`
+    });
+  } else {
+    checks3.push({
+      check: "duplicate_sections",
+      level: "ok",
+      message: "No duplicate section headings found"
+    });
+  }
+  const exampleCount = countExamples(body);
+  checks3.push({
+    check: "examples_count",
+    level: "ok",
+    message: `Found ${exampleCount} example heading${exampleCount === 1 ? "" : "s"}`
+  });
+  if (words > DEFAULT_SKILL_MD_WARNING_WORDS && referenceFiles.length < 2) {
+    checks3.push({
+      check: "progressive_disclosure",
+      level: "warning",
+      message: `SKILL.md body is ${words} words but references/ has ${referenceFiles.length} file${referenceFiles.length === 1 ? "" : "s"}; move long sections into references/ so the always-loaded body stays lean`
+    });
+  } else if (isEmptyDir(join10(skillPath, "scripts")) || isEmptyDir(join10(skillPath, "assets"))) {
+    checks3.push({
+      check: "progressive_disclosure",
+      level: "ok",
+      message: "scripts/ or assets/ exists but is empty; add content or remove the empty directory"
+    });
+  } else {
+    checks3.push({
+      check: "progressive_disclosure",
+      level: "ok",
+      message: "Progressive disclosure looks good"
+    });
+  }
+  const summary = { ok: 0, warning: 0, error: 0 };
+  for (const check2 of checks3)
+    summary[check2.level] += 1;
+  return { checks: checks3, summary };
 }
 
 // lib/behavioral-tdd.ts
@@ -15211,7 +15174,7 @@ function mostCommonSkillType(counts) {
   }
   return best;
 }
-function validateBehavioralCases(data) {
+function validateBehavioralCases(data, options) {
   let rawCases = [];
   if (Array.isArray(data)) {
     rawCases = data;
@@ -15235,6 +15198,7 @@ function validateBehavioralCases(data) {
   const warnings = [];
   const cases = [];
   const typeCounts = new Map;
+  const strict = options?.strict === true;
   for (const [index, raw] of rawCases.entries()) {
     const label = `case ${index}`;
     if (!raw || typeof raw !== "object") {
@@ -15288,10 +15252,18 @@ function validateBehavioralCases(data) {
       parsed.baseline = input.baseline;
     }
     if ((caseType === "pressure" || caseType === "regression") && !(Array.isArray(input.expected_behavior) && input.expected_behavior.length > 0)) {
-      warnings.push(`${label}: ${caseType} case has no expected_behavior \u2014 observable expectations are what make the case fail honestly`);
+      const message = `${label}: ${caseType} case has no expected_behavior \u2014 observable expectations are what make the case fail honestly`;
+      if (strict)
+        errors3.push(message);
+      else
+        warnings.push(message);
     }
     if ((parsed.skill_type === "discipline" || parsed.skill_type === "workflow") && !(parsed.baseline && parsed.baseline.required === true)) {
-      warnings.push(`${label}: ${parsed.skill_type} case should declare baseline.required = true`);
+      const message = `${label}: ${parsed.skill_type} case should declare baseline.required = true`;
+      if (strict)
+        errors3.push(message);
+      else
+        warnings.push(message);
     }
     cases.push(parsed);
   }
@@ -15425,19 +15397,61 @@ function groupPatterns(records) {
 function loadRegressionSuite(path) {
   if (!existsSync9(path))
     return null;
+  let parsed;
   try {
-    const parsed = JSON.parse(readFileSync8(path, "utf-8"));
-    if (!parsed || typeof parsed !== "object")
-      return null;
-    const candidate = parsed;
-    if (typeof candidate.skill_name !== "string")
-      return null;
-    if (!Array.isArray(candidate.cases))
-      return null;
-    return candidate;
-  } catch {
-    return null;
+    parsed = JSON.parse(readFileSync8(path, "utf-8"));
+  } catch (error45) {
+    const detail = error45 instanceof Error ? error45.message : String(error45);
+    throw new Error(`regression suite ${path} contains invalid JSON: ${detail}`);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`regression suite ${path} is malformed: suite must be an object with skill_name and cases`);
+  }
+  const candidate = parsed;
+  const problems = [];
+  if (typeof candidate.skill_name !== "string" || candidate.skill_name.trim() === "") {
+    problems.push("skill_name must be a non-empty string");
+  }
+  if (!Array.isArray(candidate.cases)) {
+    problems.push("cases must be an array");
+  } else {
+    for (const [index, raw] of candidate.cases.entries()) {
+      const label = `case ${index}`;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        problems.push(`${label}: expected an object`);
+        continue;
+      }
+      const item = raw;
+      if (typeof item.id !== "string" || item.id.trim() === "") {
+        problems.push(`${label}: id must be a non-empty string`);
+      }
+      if (typeof item.prompt !== "string" || item.prompt.trim() === "") {
+        problems.push(`${label}: prompt must be a non-empty string`);
+      }
+      if (item.source !== "production-failure" && item.source !== "eval-failure") {
+        problems.push(`${label}: source must be production-failure or eval-failure`);
+      }
+      if (!Array.isArray(item.expected_behavior) || !item.expected_behavior.every((entry) => typeof entry === "string")) {
+        problems.push(`${label}: expected_behavior must be an array of strings`);
+      }
+      if (!Array.isArray(item.rationalization_summary) || !item.rationalization_summary.every((entry) => typeof entry === "string")) {
+        problems.push(`${label}: rationalization_summary must be an array of strings`);
+      }
+      if (typeof item.created_at !== "string") {
+        problems.push(`${label}: created_at must be a string`);
+      }
+      if (typeof item.resolved !== "boolean") {
+        problems.push(`${label}: resolved must be a boolean`);
+      }
+      if (item.origin_case_id !== undefined && typeof item.origin_case_id !== "string") {
+        problems.push(`${label}: origin_case_id must be a string`);
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(`regression suite ${path} is malformed: ${problems.join("; ")}`);
+  }
+  return candidate;
 }
 function saveRegressionSuite(path, suite) {
   const dir = dirname3(path);
@@ -15447,7 +15461,11 @@ function saveRegressionSuite(path, suite) {
   renameSync3(tmpPath, path);
 }
 function promoteToRegression(suitePath, input) {
-  const suite = loadRegressionSuite(suitePath) ?? {
+  const loaded = loadRegressionSuite(suitePath);
+  if (loaded && loaded.skill_name !== input.skill_name) {
+    throw new Error(`regression suite ${suitePath} belongs to skill '${loaded.skill_name}'; refusing to append case for skill '${input.skill_name}'`);
+  }
+  const suite = loaded ?? {
     skill_name: input.skill_name,
     cases: []
   };
@@ -15481,6 +15499,245 @@ function resolveRegressionCase(suitePath, id) {
   target.resolved = true;
   saveRegressionSuite(suitePath, suite);
   return { suite, found: true };
+}
+
+// lib/instruction-usefulness.ts
+var MIN_RUNS_PER_SIDE = 5;
+var REMOVE_DELTA = 0.02;
+var KEEP_DELTA = 0.05;
+var NOOP_BASELINE = 0.95;
+var NOOP_MAX_DELTA = 0.03;
+var WILSON_Z = 1.96;
+function round4(value) {
+  const rounded = Math.round(value * 1e4) / 1e4;
+  return rounded === 0 ? 0 : rounded;
+}
+function formatDelta(delta) {
+  return `${delta >= 0 ? "+" : ""}${delta.toFixed(2)}`;
+}
+function wilsonInterval(passed, runs) {
+  const p = passed / runs;
+  const z2 = WILSON_Z * WILSON_Z;
+  const denominator = 1 + z2 / runs;
+  const center = (p + z2 / (2 * runs)) / denominator;
+  const half = WILSON_Z * Math.sqrt(p * (1 - p) / runs + z2 / (4 * runs * runs)) / denominator;
+  return {
+    lower: Math.max(0, center - half),
+    upper: Math.min(1, center + half)
+  };
+}
+function assessFromEvidence(evidence) {
+  const baseline_rate = evidence.baseline_passed / evidence.baseline_runs;
+  const with_rate = evidence.with_passed / evidence.with_runs;
+  const delta = round4(with_rate - baseline_rate);
+  const sample_size = Math.min(evidence.baseline_runs, evidence.with_runs);
+  let recommendation;
+  let rationale;
+  if (sample_size < MIN_RUNS_PER_SIDE) {
+    recommendation = "insufficient-data";
+    rationale = `insufficient-data: sample too small to distinguish signal from noise (need at least ${MIN_RUNS_PER_SIDE} runs per side)`;
+  } else if (baseline_rate >= NOOP_BASELINE && delta <= NOOP_MAX_DELTA) {
+    recommendation = "remove";
+    rationale = `remove: the agent already performs the behavior consistently without the instruction (delta ${formatDelta(delta)}); the instruction is a no-op`;
+  } else if (delta <= REMOVE_DELTA) {
+    recommendation = "remove";
+    if (delta < 0) {
+      rationale = evidence.instruction_text ? `remove: instruction '${evidence.instruction_text}' makes behavior worse (delta ${formatDelta(delta)})` : `remove: the instruction makes behavior worse (delta ${formatDelta(delta)})`;
+    } else {
+      rationale = evidence.instruction_text ? `remove: instruction '${evidence.instruction_text}' shows no meaningful behavioral change (delta ${formatDelta(delta)})` : `remove: delta ${formatDelta(delta)} or less does not justify the context cost of the instruction`;
+    }
+  } else if (delta >= KEEP_DELTA) {
+    const baseline_interval = wilsonInterval(evidence.baseline_passed, evidence.baseline_runs);
+    const with_interval = wilsonInterval(evidence.with_passed, evidence.with_runs);
+    if (with_interval.lower > baseline_interval.upper) {
+      recommendation = "keep";
+      rationale = `keep: instruction shows a meaningful behavioral improvement (delta ${formatDelta(delta)})`;
+    } else {
+      recommendation = "review";
+      rationale = `review: delta ${formatDelta(delta)} is not statistically significant; run more samples or review the transcript quality before deciding`;
+    }
+  } else {
+    recommendation = "review";
+    rationale = `review: delta ${formatDelta(delta)} is not statistically significant; run more samples or review the transcript quality before deciding`;
+  }
+  const result = {
+    baseline_pass_rate: round4(baseline_rate),
+    with_instruction_pass_rate: round4(with_rate),
+    delta,
+    baseline_runs: evidence.baseline_runs,
+    with_runs: evidence.with_runs,
+    sample_size,
+    baseline_passed: evidence.baseline_passed,
+    with_instruction_passed: evidence.with_passed,
+    recommendation,
+    rationale
+  };
+  if (evidence.instruction_text) {
+    result.instruction_text = evidence.instruction_text;
+  }
+  return result;
+}
+function assessInstructionUsefulness(input) {
+  const {
+    baseline_pass_rate,
+    with_instruction_pass_rate,
+    baseline_runs,
+    with_runs
+  } = input;
+  if (!Number.isFinite(baseline_pass_rate) || !Number.isFinite(with_instruction_pass_rate) || baseline_pass_rate < 0 || baseline_pass_rate > 1 || with_instruction_pass_rate < 0 || with_instruction_pass_rate > 1) {
+    throw new Error("pass rates must be between 0 and 1");
+  }
+  if (!Number.isInteger(baseline_runs) || !Number.isInteger(with_runs) || baseline_runs <= 0 || with_runs <= 0) {
+    throw new Error("run counts must be positive integers");
+  }
+  const baseline_passed = Math.round(baseline_pass_rate * baseline_runs);
+  if (Math.abs(baseline_pass_rate - baseline_passed / baseline_runs) > 0.000000001) {
+    throw new Error(`pass rate ${baseline_pass_rate} is impossible for ${baseline_runs} runs (would imply ${baseline_passed} passed)`);
+  }
+  const with_passed = Math.round(with_instruction_pass_rate * with_runs);
+  if (Math.abs(with_instruction_pass_rate - with_passed / with_runs) > 0.000000001) {
+    throw new Error(`pass rate ${with_instruction_pass_rate} is impossible for ${with_runs} runs (would imply ${with_passed} passed)`);
+  }
+  return assessFromEvidence({
+    baseline_passed,
+    baseline_runs,
+    with_passed,
+    with_runs,
+    instruction_text: input.instruction_text
+  });
+}
+
+// lib/evidence-tools.ts
+function createEvidenceDrivenTools() {
+  return {
+    skill_context_lint: tool({
+      description: "Lint a skill's context/token budget: SKILL.md size and estimated tokens, references count and depth, largest reference, duplicate sections, examples count, and progressive-disclosure suggestions. Budgets are configurable per call; warnings are advisory.",
+      args: {
+        skillPath: tool.schema.string().describe("Path to the skill directory containing SKILL.md"),
+        budgets: tool.schema.object({
+          skill_md: tool.schema.object({
+            warning_words: tool.schema.number().optional(),
+            error_words: tool.schema.number().nullable().optional()
+          }).optional(),
+          frequent_skill: tool.schema.object({
+            warning_words: tool.schema.number().optional()
+          }).optional(),
+          reference_depth: tool.schema.object({
+            warning: tool.schema.number().optional()
+          }).optional()
+        }).optional().describe("Optional budget overrides (defaults: skill_md.warning_words 500, skill_md.error_words null, frequent_skill.warning_words 250, reference_depth.warning 2)")
+      },
+      async execute(args) {
+        return JSON.stringify(lintSkillContext(args.skillPath, args.budgets), null, 2);
+      }
+    }),
+    skill_validate_cases: tool({
+      description: "Validate a behavioral case set (evals/evals.json) for the behavioral TDD workflow. Accepts an array of cases or {evals: [...]}. Checks prompt, type, skill_type, expected_behavior, and tags, and reports the baseline policy derived from the most common skill type.",
+      args: {
+        casesPath: tool.schema.string().describe("Path to the behavioral case set JSON (array of cases or {evals: [...]})"),
+        strict: tool.schema.boolean().optional().describe("When true, missing required baseline or expected_behavior for the relevant case types becomes a validation error instead of a warning")
+      },
+      async execute(args) {
+        const { readFileSync: readFileSync9 } = await import("fs");
+        const data = JSON.parse(readFileSync9(args.casesPath, "utf-8"));
+        const result = validateBehavioralCases(data, { strict: args.strict === true });
+        return JSON.stringify({
+          valid: result.valid,
+          errors: result.errors,
+          warnings: result.warnings,
+          case_count: result.cases.length,
+          baseline_policy: result.baseline_policy
+        }, null, 2);
+      }
+    }),
+    skill_collect_rationalizations: tool({
+      description: "Collect observable rationalization records from every grading.json under a workspace: what pressured the agent, the observable summary of why it failed, and any violated rule or mitigation. Only explicit summary fields are read \u2014 never private chain-of-thought.",
+      args: {
+        workspace: tool.schema.string().describe("Path to the workspace directory containing grading.json files")
+      },
+      async execute(args) {
+        const report = collectRationalizations(args.workspace);
+        return JSON.stringify({
+          record_count: report.records.length,
+          records: report.records,
+          patterns: report.patterns
+        }, null, 2);
+      }
+    }),
+    skill_regression_suite: tool({
+      description: "Manage the regression suite for a skill: promote a real behavioral failure to a permanent regression case (deduped by prompt), list existing cases, or mark a case resolved.",
+      args: {
+        action: tool.schema.enum(["add", "list", "resolve"]).describe("Action: add a regression case, list the suite, or resolve a case"),
+        suitePath: tool.schema.string().describe("Path to the regression suite JSON file (e.g. <skill>/evals/regression-suite.json)"),
+        skillName: tool.schema.string().optional().describe("Skill name (required for add when the suite does not exist yet)"),
+        source: tool.schema.enum(["production-failure", "eval-failure"]).optional().describe("Failure source (defaults to eval-failure for add)"),
+        originCaseId: tool.schema.string().optional().describe("Origin eval case id for the failure"),
+        prompt: tool.schema.string().optional().describe("Minimal reproducible prompt (required for add)"),
+        expectedBehavior: tool.schema.array(tool.schema.string()).optional().describe("Expected observable behaviors"),
+        rationalizationSummary: tool.schema.array(tool.schema.string()).optional().describe("Observable rationalization summaries for the failure"),
+        id: tool.schema.string().optional().describe("Regression case id (required for resolve)")
+      },
+      async execute(args) {
+        switch (args.action) {
+          case "add": {
+            if (!args.skillName) {
+              throw new Error("skill_regression_suite add requires skillName");
+            }
+            if (!args.prompt) {
+              throw new Error("skill_regression_suite add requires prompt");
+            }
+            const result = promoteToRegression(args.suitePath, {
+              skill_name: args.skillName,
+              source: args.source ?? "eval-failure",
+              origin_case_id: args.originCaseId,
+              prompt: args.prompt,
+              expected_behavior: args.expectedBehavior,
+              rationalization_summary: args.rationalizationSummary
+            });
+            return JSON.stringify({
+              added: result.added,
+              existing_id: result.existing_id,
+              case: result.case
+            }, null, 2);
+          }
+          case "list": {
+            const suite = loadRegressionSuite(args.suitePath);
+            return JSON.stringify({ cases: suite?.cases ?? [] }, null, 2);
+          }
+          case "resolve": {
+            if (!args.id) {
+              throw new Error("skill_regression_suite resolve requires id");
+            }
+            const result = resolveRegressionCase(args.suitePath, args.id);
+            const resolvedCase = result.found ? result.suite.cases.find((c) => c.id === args.id) ?? null : null;
+            return JSON.stringify({ found: result.found, case: resolvedCase }, null, 2);
+          }
+          default:
+            throw new Error(`skill_regression_suite unknown action: ${String(args.action)}`);
+        }
+      }
+    }),
+    skill_instruction_usefulness: tool({
+      description: "Assess whether a specific skill instruction changes agent behavior enough to justify its context cost. Takes pass rates from baseline (without the instruction) and with-instruction runs and returns a recommendation: keep, review, remove, or insufficient-data.",
+      args: {
+        baselinePassRate: tool.schema.number().describe("Pass rate WITHOUT the instruction, as a decimal from 0 to 1"),
+        withInstructionPassRate: tool.schema.number().describe("Pass rate WITH the instruction, as a decimal from 0 to 1"),
+        baselineRuns: tool.schema.number().describe("Number of baseline runs (sample size; at least 5 recommended)"),
+        withRuns: tool.schema.number().describe("Number of with-instruction runs (sample size; at least 5 recommended)"),
+        instructionText: tool.schema.string().optional().describe("The instruction being assessed (optional; echoed in the output)")
+      },
+      async execute(args) {
+        const result = assessInstructionUsefulness({
+          baseline_pass_rate: args.baselinePassRate,
+          with_instruction_pass_rate: args.withInstructionPassRate,
+          baseline_runs: args.baselineRuns,
+          with_runs: args.withRuns,
+          instruction_text: args.instructionText
+        });
+        return JSON.stringify(result, null, 2);
+      }
+    })
+  };
 }
 
 // skill-creator.ts
@@ -15678,27 +15935,6 @@ var SkillCreatorPlugin = async (ctx) => {
             content: meta.fullContent,
             contentLength: meta.fullContent.length
           }, null, 2);
-        }
-      }),
-      skill_context_lint: tool({
-        description: "Lint a skill's context/token budget: SKILL.md size and estimated tokens, references count and depth, largest reference, duplicate sections, examples count, and progressive-disclosure suggestions. Budgets are configurable per call; warnings are advisory.",
-        args: {
-          skillPath: tool.schema.string().describe("Path to the skill directory containing SKILL.md"),
-          budgets: tool.schema.object({
-            skill_md: tool.schema.object({
-              warning_words: tool.schema.number().optional(),
-              error_words: tool.schema.number().nullable().optional()
-            }).optional(),
-            frequent_skill: tool.schema.object({
-              warning_words: tool.schema.number().optional()
-            }).optional(),
-            reference_depth: tool.schema.object({
-              warning: tool.schema.number().optional()
-            }).optional()
-          }).optional().describe("Optional budget overrides (defaults: skill_md.warning_words 500, skill_md.error_words null, frequent_skill.warning_words 250, reference_depth.warning 2)")
-        },
-        async execute(args) {
-          return JSON.stringify(lintSkillContext(args.skillPath, args.budgets), null, 2);
         }
       }),
       skill_add_gold_standard: tool({
@@ -16000,111 +16236,7 @@ var SkillCreatorPlugin = async (ctx) => {
           });
         }
       }),
-      skill_validate_cases: tool({
-        description: "Validate a behavioral case set (evals/evals.json) for the behavioral TDD workflow. Accepts an array of cases or {evals: [...]}. Checks prompt, type, skill_type, expected_behavior, and tags, and reports the baseline policy derived from the most common skill type.",
-        args: {
-          casesPath: tool.schema.string().describe("Path to the behavioral case set JSON (array of cases or {evals: [...]})")
-        },
-        async execute(args) {
-          const { readFileSync: readFileSync10 } = await import("fs");
-          const data = JSON.parse(readFileSync10(args.casesPath, "utf-8"));
-          const result = validateBehavioralCases(data);
-          return JSON.stringify({
-            valid: result.valid,
-            errors: result.errors,
-            warnings: result.warnings,
-            case_count: result.cases.length,
-            baseline_policy: result.baseline_policy
-          }, null, 2);
-        }
-      }),
-      skill_collect_rationalizations: tool({
-        description: "Collect observable rationalization records from every grading.json under a workspace: what pressured the agent, the observable summary of why it failed, and any violated rule or mitigation. Only explicit summary fields are read \u2014 never private chain-of-thought.",
-        args: {
-          workspace: tool.schema.string().describe("Path to the workspace directory containing grading.json files")
-        },
-        async execute(args) {
-          const report = collectRationalizations(args.workspace);
-          return JSON.stringify({
-            record_count: report.records.length,
-            records: report.records,
-            patterns: report.patterns
-          }, null, 2);
-        }
-      }),
-      skill_regression_suite: tool({
-        description: "Manage the regression suite for a skill: promote a real behavioral failure to a permanent regression case (deduped by prompt), list existing cases, or mark a case resolved.",
-        args: {
-          action: tool.schema.enum(["add", "list", "resolve"]).describe("Action: add a regression case, list the suite, or resolve a case"),
-          suitePath: tool.schema.string().describe("Path to the regression suite JSON file (e.g. <skill>/evals/regression-suite.json)"),
-          skillName: tool.schema.string().optional().describe("Skill name (required for add when the suite does not exist yet)"),
-          source: tool.schema.enum(["production-failure", "eval-failure"]).optional().describe("Failure source (defaults to eval-failure for add)"),
-          originCaseId: tool.schema.string().optional().describe("Origin eval case id for the failure"),
-          prompt: tool.schema.string().optional().describe("Minimal reproducible prompt (required for add)"),
-          expectedBehavior: tool.schema.array(tool.schema.string()).optional().describe("Expected observable behaviors"),
-          rationalizationSummary: tool.schema.array(tool.schema.string()).optional().describe("Observable rationalization summaries for the failure"),
-          id: tool.schema.string().optional().describe("Regression case id (required for resolve)")
-        },
-        async execute(args) {
-          switch (args.action) {
-            case "add": {
-              if (!args.skillName) {
-                throw new Error("skill_regression_suite add requires skillName");
-              }
-              if (!args.prompt) {
-                throw new Error("skill_regression_suite add requires prompt");
-              }
-              const result = promoteToRegression(args.suitePath, {
-                skill_name: args.skillName,
-                source: args.source ?? "eval-failure",
-                origin_case_id: args.originCaseId,
-                prompt: args.prompt,
-                expected_behavior: args.expectedBehavior,
-                rationalization_summary: args.rationalizationSummary
-              });
-              return JSON.stringify({
-                added: result.added,
-                existing_id: result.existing_id,
-                case: result.case
-              }, null, 2);
-            }
-            case "list": {
-              const suite = loadRegressionSuite(args.suitePath);
-              return JSON.stringify({ cases: suite?.cases ?? [] }, null, 2);
-            }
-            case "resolve": {
-              if (!args.id) {
-                throw new Error("skill_regression_suite resolve requires id");
-              }
-              const result = resolveRegressionCase(args.suitePath, args.id);
-              const resolvedCase = result.found ? result.suite.cases.find((c) => c.id === args.id) ?? null : null;
-              return JSON.stringify({ found: result.found, case: resolvedCase }, null, 2);
-            }
-            default:
-              throw new Error(`skill_regression_suite unknown action: ${String(args.action)}`);
-          }
-        }
-      }),
-      skill_instruction_usefulness: tool({
-        description: "Assess whether a specific skill instruction changes agent behavior enough to justify its context cost. Takes pass rates from baseline (without the instruction) and with-instruction runs and returns a recommendation: keep, review, remove, or insufficient-data.",
-        args: {
-          baselinePassRate: tool.schema.number().describe("Pass rate WITHOUT the instruction, as a decimal from 0 to 1"),
-          withInstructionPassRate: tool.schema.number().describe("Pass rate WITH the instruction, as a decimal from 0 to 1"),
-          baselineRuns: tool.schema.number().describe("Number of baseline runs (sample size; at least 5 recommended)"),
-          withRuns: tool.schema.number().describe("Number of with-instruction runs (sample size; at least 5 recommended)"),
-          instructionText: tool.schema.string().optional().describe("The instruction being assessed (optional; echoed in the output)")
-        },
-        async execute(args) {
-          const result = assessInstructionUsefulness({
-            baseline_pass_rate: args.baselinePassRate,
-            with_instruction_pass_rate: args.withInstructionPassRate,
-            baseline_runs: args.baselineRuns,
-            with_runs: args.withRuns,
-            instruction_text: args.instructionText
-          });
-          return JSON.stringify(result, null, 2);
-        }
-      })
+      ...createEvidenceDrivenTools()
     }
   };
 };
