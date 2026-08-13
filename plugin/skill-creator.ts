@@ -27,6 +27,7 @@ import {
   findProjectRoot,
 } from "./lib/run-eval"
 import { improveDescription } from "./lib/improve-description"
+import { assessInstructionUsefulness } from "./lib/instruction-usefulness"
 import { runLoop } from "./lib/run-loop"
 import { generateBenchmark, generateMarkdown } from "./lib/aggregate"
 import { generateHtml as generateReportHtml } from "./lib/report"
@@ -931,6 +932,42 @@ export const SkillCreatorPlugin: Plugin = async (ctx) => {
             },
             message: `Static viewer written to ${outPath}`,
           })
+        },
+      }),
+
+      // ---------------------------------------------------------------
+      // skill_instruction_usefulness — assess instruction context cost
+      // ---------------------------------------------------------------
+      skill_instruction_usefulness: tool({
+        description:
+          "Assess whether a specific skill instruction changes agent behavior enough to justify its context cost. Takes pass rates from baseline (without the instruction) and with-instruction runs and returns a recommendation: keep, review, remove, or insufficient-data.",
+        args: {
+          baselinePassRate: tool.schema
+            .number()
+            .describe("Pass rate WITHOUT the instruction, as a decimal from 0 to 1"),
+          withInstructionPassRate: tool.schema
+            .number()
+            .describe("Pass rate WITH the instruction, as a decimal from 0 to 1"),
+          baselineRuns: tool.schema
+            .number()
+            .describe("Number of baseline runs (sample size; at least 5 recommended)"),
+          withRuns: tool.schema
+            .number()
+            .describe("Number of with-instruction runs (sample size; at least 5 recommended)"),
+          instructionText: tool.schema
+            .string()
+            .optional()
+            .describe("The instruction being assessed (optional; echoed in the output)"),
+        },
+        async execute(args) {
+          const result = assessInstructionUsefulness({
+            baseline_pass_rate: args.baselinePassRate,
+            with_instruction_pass_rate: args.withInstructionPassRate,
+            baseline_runs: args.baselineRuns,
+            with_runs: args.withRuns,
+            instruction_text: args.instructionText,
+          })
+          return JSON.stringify(result, null, 2)
         },
       }),
     },

@@ -13180,6 +13180,69 @@ Please respond with only the new description text in <new_description> tags, not
   return description;
 }
 
+// lib/instruction-usefulness.ts
+var MIN_RUNS_PER_SIDE = 5;
+var REMOVE_DELTA = 0.02;
+var KEEP_DELTA = 0.05;
+var NOOP_BASELINE = 0.95;
+var NOOP_MAX_DELTA = 0.03;
+function round4(value) {
+  const rounded = Math.round(value * 1e4) / 1e4;
+  return rounded === 0 ? 0 : rounded;
+}
+function formatDelta(delta) {
+  return `${delta >= 0 ? "+" : ""}${delta.toFixed(2)}`;
+}
+function assessInstructionUsefulness(input) {
+  const {
+    baseline_pass_rate,
+    with_instruction_pass_rate,
+    baseline_runs,
+    with_runs
+  } = input;
+  if (!Number.isFinite(baseline_pass_rate) || !Number.isFinite(with_instruction_pass_rate) || baseline_pass_rate < 0 || baseline_pass_rate > 1 || with_instruction_pass_rate < 0 || with_instruction_pass_rate > 1) {
+    throw new Error("pass rates must be between 0 and 1");
+  }
+  if (!Number.isInteger(baseline_runs) || !Number.isInteger(with_runs) || baseline_runs <= 0 || with_runs <= 0) {
+    throw new Error("run counts must be positive integers");
+  }
+  const instructionText = input.instruction_text?.trim() || undefined;
+  const delta = round4(with_instruction_pass_rate - baseline_pass_rate);
+  const sample_size = Math.min(baseline_runs, with_runs);
+  let recommendation;
+  let rationale;
+  if (sample_size < MIN_RUNS_PER_SIDE) {
+    recommendation = "insufficient-data";
+    rationale = `insufficient-data: sample too small to distinguish signal from noise (need at least ${MIN_RUNS_PER_SIDE} runs per side)`;
+  } else if (baseline_pass_rate >= NOOP_BASELINE && delta <= NOOP_MAX_DELTA) {
+    recommendation = "remove";
+    rationale = `remove: the agent already performs the behavior consistently without the instruction (delta ${formatDelta(delta)}); the instruction is a no-op`;
+  } else if (delta <= REMOVE_DELTA) {
+    recommendation = "remove";
+    rationale = instructionText ? `remove: instruction '${instructionText}' shows no meaningful behavioral change (delta ${formatDelta(delta)})` : `remove: delta ${formatDelta(delta)} or less does not justify the context cost of the instruction`;
+  } else if (delta >= KEEP_DELTA) {
+    recommendation = "keep";
+    rationale = `keep: instruction shows a meaningful behavioral improvement (delta ${formatDelta(delta)})`;
+  } else {
+    recommendation = "review";
+    rationale = `review: delta is between +0.02 and +0.05; run more samples or review the transcript quality before deciding`;
+  }
+  const result = {
+    baseline_pass_rate,
+    with_instruction_pass_rate,
+    delta,
+    baseline_runs,
+    with_runs,
+    sample_size,
+    recommendation,
+    rationale
+  };
+  if (instructionText) {
+    result.instruction_text = instructionText;
+  }
+  return result;
+}
+
 // lib/run-loop.ts
 import { writeFileSync as writeFileSync3 } from "fs";
 
@@ -15323,6 +15386,26 @@ var SkillCreatorPlugin = async (ctx) => {
             },
             message: `Static viewer written to ${outPath}`
           });
+        }
+      }),
+      skill_instruction_usefulness: tool({
+        description: "Assess whether a specific skill instruction changes agent behavior enough to justify its context cost. Takes pass rates from baseline (without the instruction) and with-instruction runs and returns a recommendation: keep, review, remove, or insufficient-data.",
+        args: {
+          baselinePassRate: tool.schema.number().describe("Pass rate WITHOUT the instruction, as a decimal from 0 to 1"),
+          withInstructionPassRate: tool.schema.number().describe("Pass rate WITH the instruction, as a decimal from 0 to 1"),
+          baselineRuns: tool.schema.number().describe("Number of baseline runs (sample size; at least 5 recommended)"),
+          withRuns: tool.schema.number().describe("Number of with-instruction runs (sample size; at least 5 recommended)"),
+          instructionText: tool.schema.string().optional().describe("The instruction being assessed (optional; echoed in the output)")
+        },
+        async execute(args) {
+          const result = assessInstructionUsefulness({
+            baseline_pass_rate: args.baselinePassRate,
+            with_instruction_pass_rate: args.withInstructionPassRate,
+            baseline_runs: args.baselineRuns,
+            with_runs: args.withRuns,
+            instruction_text: args.instructionText
+          });
+          return JSON.stringify(result, null, 2);
         }
       })
     }
