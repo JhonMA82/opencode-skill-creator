@@ -14503,6 +14503,7 @@ async function serveReview(opts) {
         detached: true,
         stdio: "ignore"
       });
+      openProc.on("error", () => {});
       openProc.unref();
     } catch {}
   }

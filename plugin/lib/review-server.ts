@@ -707,6 +707,11 @@ export async function serveReview(opts: ServeReviewOptions): Promise<{
         detached: true,
         stdio: "ignore",
       })
+      // The synchronous try/catch does not cover the async `error` event
+      // (e.g. ENOENT on Linux, where `open` does not exist). Without this
+      // handler, a headless environment crashes the server with an
+      // uncaughtException instead of skipping the best-effort browser open.
+      openProc.on("error", () => {})
       openProc.unref()
     } catch {
       /* ignore — headless environment */
