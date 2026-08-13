@@ -40,7 +40,8 @@ function makeSkillDir(
       writeFileSync(join(dir, "SKILL.md"), "# No frontmatter here\n")
     } else {
       const frontmatter =
-        options.frontmatter ?? 'name: test-skill\ndescription: "A test skill"\n'
+        options.frontmatter ??
+        'name: test-skill\ndescription: "Use this skill when the user asks to fix a bug"\n'
       const body = options.body ?? "# Test Skill\n\nSome instructions.\n"
       writeFileSync(join(dir, "SKILL.md"), `---\n${frontmatter}---\n\n${body}`)
     }
@@ -69,6 +70,7 @@ function words(n: number): string {
 const CHECK_NAMES = [
   "skill_md_exists",
   "frontmatter_valid",
+  "description_trigger",
   "skill_md_words",
   "skill_md_tokens",
   "references_count",
@@ -163,7 +165,7 @@ test("lintSkillContext: valid minimal skill has all checks, no errors", () => {
 
   expect(result.checks.map((check) => check.check)).toEqual(CHECK_NAMES)
   expect(result.checks.every((check) => check.level === "ok")).toBe(true)
-  expect(result.summary).toEqual({ ok: 10, warning: 0, error: 0 })
+  expect(result.summary).toEqual({ ok: 11, warning: 0, error: 0 })
   expect(
     result.checks.find((check) => check.check === "skill_md_words")?.level,
   ).toBe("ok")
@@ -321,6 +323,63 @@ test("lintSkillContext: frontmatter missing description key errors", () => {
   const dir = makeSkillDir({ frontmatter: "name: test-skill\n" })
   const result = lintSkillContext(dir)
 
+  const check = result.checks.find((c) => c.check === "frontmatter_valid")
+  expect(check?.level).toBe("error")
+})
+
+// ---------------------------------------------------------------------------
+// description_trigger advisory
+// ---------------------------------------------------------------------------
+
+test("lintSkillContext: very short description warns on description_trigger", () => {
+  const dir = makeSkillDir({ frontmatter: 'name: test-skill\ndescription: "Fixes bugs"\n' })
+  const result = lintSkillContext(dir)
+
+  const check = result.checks.find((c) => c.check === "description_trigger")
+  expect(check?.level).toBe("warning")
+  expect(check?.message).toContain("only 2 words")
+  expect(result.summary.warning).toBeGreaterThanOrEqual(1)
+})
+
+test("lintSkillContext: description with enough trigger context is ok", () => {
+  const dir = makeSkillDir({
+    frontmatter:
+      'name: test-skill\ndescription: "Use this skill whenever the user mentions dashboards or metrics"\n',
+  })
+  const result = lintSkillContext(dir)
+
+  const check = result.checks.find((c) => c.check === "description_trigger")
+  expect(check?.level).toBe("ok")
+  expect(check?.message).toContain("words")
+})
+
+test("lintSkillContext: unquoted short description also warns", () => {
+  const dir = makeSkillDir({ frontmatter: "name: test-skill\ndescription: Fixes bugs\n" })
+  const result = lintSkillContext(dir)
+
+  const check = result.checks.find((c) => c.check === "description_trigger")
+  expect(check?.level).toBe("warning")
+})
+
+test("lintSkillContext: block-scalar description is ok and never warns", () => {
+  const dir = makeSkillDir({
+    frontmatter: "name: test-skill\ndescription: |\n  Long multi-line description.\n",
+  })
+  const result = lintSkillContext(dir)
+
+  const check = result.checks.find((c) => c.check === "description_trigger")
+  expect(check?.level).toBe("ok")
+  expect(check?.message).toContain("single-line")
+})
+
+test("lintSkillContext: invalid frontmatter does not emit description_trigger at all", () => {
+  const dir = makeSkillDir({ noFrontmatter: true })
+  const result = lintSkillContext(dir)
+
+  expect(result.checks.some((c) => c.check === "description_trigger")).toBe(false)
+  expect(
+    result.checks.some((c) => c.check === "description_trigger" && c.level === "warning"),
+  ).toBe(false)
   const check = result.checks.find((c) => c.check === "frontmatter_valid")
   expect(check?.level).toBe("error")
 })

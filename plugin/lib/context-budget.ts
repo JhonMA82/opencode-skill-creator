@@ -139,9 +139,9 @@ function isEmptyDir(dir: string): boolean {
 
 /**
  * Lint a skill's context/token budget. Checks, in order:
- * skill_md_exists, frontmatter_valid, skill_md_words, skill_md_tokens,
- * references_count, reference_depth, largest_reference, duplicate_sections,
- * examples_count, progressive_disclosure.
+ * skill_md_exists, frontmatter_valid, description_trigger, skill_md_words,
+ * skill_md_tokens, references_count, reference_depth, largest_reference,
+ * duplicate_sections, examples_count, progressive_disclosure.
  *
  * All file reads are wrapped in try/catch and produce error checks instead of
  * throwing; the only early return is a missing SKILL.md.
@@ -213,6 +213,43 @@ export function lintSkillContext(
       ? "Frontmatter present with name and description"
       : "Missing or invalid YAML frontmatter: SKILL.md must start with --- and define name and description",
   })
+
+  // -------------------------------------------------------------------------
+  // description_trigger (advisory, only when frontmatter is valid)
+  // -------------------------------------------------------------------------
+  // A single-line `description:` is the primary trigger mechanism, so a
+  // description too short to say WHEN the skill should trigger is worth a
+  // nudge. This is an advisory heuristic, not a semantic proof: no content
+  // gate is applied, and block scalars are deliberately not parsed.
+  if (frontmatterValid) {
+    const descriptionMatch = frontmatterText.match(/^description\s*:\s*(.+)$/m)
+    const descriptionValue = descriptionMatch
+      ? descriptionMatch[1].trim().replace(/^["']+|["']+$/g, "").trim()
+      : ""
+    if (!descriptionMatch || descriptionValue === "" || /^[|>]-?$/.test(descriptionValue)) {
+      checks.push({
+        check: "description_trigger",
+        level: "ok",
+        message:
+          "Description is not a single-line value; cannot advisory-check when the skill triggers",
+      })
+    } else {
+      const descriptionWords = countWords(descriptionValue)
+      if (descriptionWords < 6) {
+        checks.push({
+          check: "description_trigger",
+          level: "warning",
+          message: `description may not clearly describe WHEN the skill should trigger (only ${descriptionWords} words)`,
+        })
+      } else {
+        checks.push({
+          check: "description_trigger",
+          level: "ok",
+          message: `Description has ${descriptionWords} words describing when the skill should trigger`,
+        })
+      }
+    }
+  }
 
   const words = countWords(body)
 
