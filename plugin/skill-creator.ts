@@ -20,6 +20,7 @@ import { fileURLToPath } from "url"
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs"
 
 import { validateSkill } from "./lib/validate"
+import { lintSkillContext } from "./lib/context-budget"
 import { parseSkillMd } from "./lib/utils"
 import {
   assertNoInstalledSkillConflict,
@@ -389,6 +390,45 @@ export const SkillCreatorPlugin: Plugin = async (ctx) => {
             null,
             2,
           )
+        },
+      }),
+
+      // ---------------------------------------------------------------
+      // skill_context_lint — lint context/token budget
+      // ---------------------------------------------------------------
+      skill_context_lint: tool({
+        description:
+          "Lint a skill's context/token budget: SKILL.md size and estimated tokens, references count and depth, largest reference, duplicate sections, examples count, and progressive-disclosure suggestions. Budgets are configurable per call; warnings are advisory.",
+        args: {
+          skillPath: tool.schema
+            .string()
+            .describe("Path to the skill directory containing SKILL.md"),
+          budgets: tool.schema
+            .object({
+              skill_md: tool.schema
+                .object({
+                  warning_words: tool.schema.number().optional(),
+                  error_words: tool.schema.number().nullable().optional(),
+                })
+                .optional(),
+              frequent_skill: tool.schema
+                .object({
+                  warning_words: tool.schema.number().optional(),
+                })
+                .optional(),
+              reference_depth: tool.schema
+                .object({
+                  warning: tool.schema.number().optional(),
+                })
+                .optional(),
+            })
+            .optional()
+            .describe(
+              "Optional budget overrides (defaults: skill_md.warning_words 500, skill_md.error_words null, frequent_skill.warning_words 250, reference_depth.warning 2)",
+            ),
+        },
+        async execute(args) {
+          return JSON.stringify(lintSkillContext(args.skillPath, args.budgets), null, 2)
         },
       }),
 

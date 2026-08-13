@@ -12336,10 +12336,10 @@ function tool(input) {
 }
 tool.schema = exports_external;
 // skill-creator.ts
-import { join as join10, dirname as dirname3, isAbsolute, relative as relative2, sep } from "path";
+import { join as join11, dirname as dirname3, isAbsolute, relative as relative3, sep as sep2 } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
-import { existsSync as existsSync8, mkdirSync as mkdirSync6, readFileSync as readFileSync7, rmSync as rmSync3, writeFileSync as writeFileSync8 } from "fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync6, readFileSync as readFileSync8, rmSync as rmSync3, writeFileSync as writeFileSync8 } from "fs";
 
 // lib/validate.ts
 import { existsSync, readFileSync } from "fs";
@@ -12476,11 +12476,260 @@ function validateSkill(skillPath) {
   return { valid: true, message: "Skill is valid!" };
 }
 
+// lib/context-budget.ts
+import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 } from "fs";
+import { join as join2, relative, sep } from "path";
+var DEFAULT_SKILL_MD_WARNING_WORDS = 500;
+var DEFAULT_FREQUENT_SKILL_WARNING_WORDS = 250;
+var DEFAULT_REFERENCE_DEPTH_WARNING = 2;
+var LARGEST_REFERENCE_WARNING_WORDS = 1500;
+var MAX_REFERENCE_FILES = 5;
+var MAX_DUPLICATES_LISTED = 3;
+var FRONTMATTER_RE = /^---\n([\s\S]*?)\n---/;
+function estimateTokens(text) {
+  return Math.ceil(countWords(text) * 133 / 100);
+}
+function countWords(text) {
+  return text.split(/\s+/).filter((token) => token.length > 0).length;
+}
+function findDuplicateSections(markdown) {
+  const body = markdown.replace(FRONTMATTER_RE, "");
+  const seen = new Set;
+  const duplicates = [];
+  for (const line of body.split(`
+`)) {
+    const match = line.match(/^#{1,6}\s+(.+)$/);
+    if (!match)
+      continue;
+    const normalized = match[1].trim().toLowerCase();
+    if (seen.has(normalized)) {
+      if (!duplicates.includes(normalized))
+        duplicates.push(normalized);
+    } else {
+      seen.add(normalized);
+    }
+  }
+  return duplicates;
+}
+function countExamples(markdown) {
+  let count = 0;
+  for (const line of markdown.split(`
+`)) {
+    const trimmed = line.trim();
+    const isHeading = /^#{1,6}\s+/.test(trimmed);
+    const isBoldLabel = /^\*\*[^*]+\*\*/.test(trimmed);
+    if ((isHeading || isBoldLabel) && /example/i.test(trimmed))
+      count += 1;
+  }
+  return count;
+}
+function defaultBudgets() {
+  return {
+    skill_md: { warning_words: DEFAULT_SKILL_MD_WARNING_WORDS, error_words: null },
+    frequent_skill: { warning_words: DEFAULT_FREQUENT_SKILL_WARNING_WORDS },
+    reference_depth: { warning: DEFAULT_REFERENCE_DEPTH_WARNING }
+  };
+}
+function listFiles(dir) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files = [];
+  for (const entry of entries) {
+    const path = join2(dir, entry.name);
+    if (entry.isDirectory())
+      files.push(...listFiles(path));
+    else if (entry.isFile())
+      files.push(path);
+  }
+  return files;
+}
+function depthUnder(root, file2) {
+  return relative(root, file2).split(sep).length;
+}
+function isEmptyDir(dir) {
+  if (!existsSync2(dir))
+    return false;
+  try {
+    return readdirSync(dir).length === 0;
+  } catch {
+    return false;
+  }
+}
+function lintSkillContext(skillPath, budgets) {
+  const skillMdPath = join2(skillPath, "SKILL.md");
+  if (!existsSync2(skillMdPath)) {
+    return {
+      checks: [
+        { check: "skill_md_exists", level: "error", message: "SKILL.md not found" }
+      ],
+      summary: { ok: 0, warning: 0, error: 1 }
+    };
+  }
+  let content;
+  try {
+    content = readFileSync2(skillMdPath, "utf-8");
+  } catch (error45) {
+    const detail = error45 instanceof Error ? error45.message : String(error45);
+    return {
+      checks: [
+        {
+          check: "skill_md_exists",
+          level: "error",
+          message: `Failed to read SKILL.md: ${detail}`
+        }
+      ],
+      summary: { ok: 0, warning: 0, error: 1 }
+    };
+  }
+  const defaults = defaultBudgets();
+  const skillBudget = { ...defaults.skill_md, ...budgets?.skill_md };
+  const frequentBudget = { ...defaults.frequent_skill, ...budgets?.frequent_skill };
+  const depthBudget = { ...defaults.reference_depth, ...budgets?.reference_depth };
+  const frontmatterMatch = content.match(FRONTMATTER_RE);
+  const frontmatterText = frontmatterMatch ? frontmatterMatch[1] : "";
+  const body = frontmatterMatch ? content.slice(frontmatterMatch[0].length) : content;
+  const checks3 = [];
+  checks3.push({
+    check: "skill_md_exists",
+    level: "ok",
+    message: "SKILL.md exists"
+  });
+  const frontmatterValid = content.startsWith("---") && frontmatterMatch !== null && /^name\s*:\s*\S/m.test(frontmatterText) && /^description\s*:\s*\S/m.test(frontmatterText);
+  checks3.push({
+    check: "frontmatter_valid",
+    level: frontmatterValid ? "ok" : "error",
+    message: frontmatterValid ? "Frontmatter present with name and description" : "Missing or invalid YAML frontmatter: SKILL.md must start with --- and define name and description"
+  });
+  const words = countWords(body);
+  const isFrequentLoading = /frequent:\s*true/.test(frontmatterText) || /load:\s*always/.test(frontmatterText);
+  const warningWords = isFrequentLoading ? frequentBudget.warning_words ?? DEFAULT_FREQUENT_SKILL_WARNING_WORDS : skillBudget.warning_words ?? DEFAULT_SKILL_MD_WARNING_WORDS;
+  if (typeof skillBudget.error_words === "number" && words > skillBudget.error_words) {
+    checks3.push({
+      check: "skill_md_words",
+      level: "error",
+      message: `SKILL.md body is ${words} words, exceeding the configured error budget of ${skillBudget.error_words} words`
+    });
+  } else if (words > warningWords) {
+    checks3.push({
+      check: "skill_md_words",
+      level: "warning",
+      message: `SKILL.md body is ${words} words (warning above ${warningWords}${isFrequentLoading ? ", frequent-loading skill" : ""}); consider moving content to references/`
+    });
+  } else {
+    checks3.push({
+      check: "skill_md_words",
+      level: "ok",
+      message: `SKILL.md body is ${words} words (budget ${warningWords})`
+    });
+  }
+  checks3.push({
+    check: "skill_md_tokens",
+    level: "ok",
+    message: `Estimated ~${estimateTokens(body)} tokens (${words} words; heuristic, not model-accurate)`
+  });
+  const referencesDir = join2(skillPath, "references");
+  const referenceFiles = listFiles(referencesDir);
+  if (referenceFiles.length > MAX_REFERENCE_FILES) {
+    checks3.push({
+      check: "references_count",
+      level: "warning",
+      message: `${referenceFiles.length} reference files in references/ (budget ${MAX_REFERENCE_FILES}); consider consolidating`
+    });
+  } else {
+    checks3.push({
+      check: "references_count",
+      level: "ok",
+      message: `${referenceFiles.length} reference file${referenceFiles.length === 1 ? "" : "s"} in references/`
+    });
+  }
+  const maxDepth = referenceFiles.reduce((max, file2) => Math.max(max, depthUnder(referencesDir, file2)), 0);
+  const depthLimit = depthBudget.warning ?? DEFAULT_REFERENCE_DEPTH_WARNING;
+  checks3.push({
+    check: "reference_depth",
+    level: maxDepth > depthLimit ? "warning" : "ok",
+    message: maxDepth > depthLimit ? `Reference nesting depth ${maxDepth} exceeds budget of ${depthLimit}; consider flattening` : `Reference nesting depth ${maxDepth} (budget ${depthLimit})`
+  });
+  let largest = null;
+  for (const file2 of referenceFiles) {
+    let fileWords = 0;
+    try {
+      fileWords = countWords(readFileSync2(file2, "utf-8"));
+    } catch {
+      fileWords = 0;
+    }
+    if (!largest || fileWords > largest.words) {
+      largest = { name: relative(referencesDir, file2), words: fileWords };
+    }
+  }
+  if (largest && largest.words > LARGEST_REFERENCE_WARNING_WORDS) {
+    checks3.push({
+      check: "largest_reference",
+      level: "warning",
+      message: `Largest reference ${largest.name} is ${largest.words} words (>${LARGEST_REFERENCE_WARNING_WORDS}); consider splitting it, and add a table of contents if it exceeds 300 lines`
+    });
+  } else {
+    checks3.push({
+      check: "largest_reference",
+      level: "ok",
+      message: largest ? `Largest reference is ${largest.name} (${largest.words} words)` : "No reference files"
+    });
+  }
+  const duplicates = findDuplicateSections(body);
+  if (duplicates.length > 0) {
+    const listed = duplicates.slice(0, MAX_DUPLICATES_LISTED).map((duplicate) => `"${duplicate}"`).join(", ");
+    const more = duplicates.length > MAX_DUPLICATES_LISTED ? ` (+${duplicates.length - MAX_DUPLICATES_LISTED} more)` : "";
+    checks3.push({
+      check: "duplicate_sections",
+      level: "warning",
+      message: `Duplicate section headings: ${listed}${more}`
+    });
+  } else {
+    checks3.push({
+      check: "duplicate_sections",
+      level: "ok",
+      message: "No duplicate section headings found"
+    });
+  }
+  const exampleCount = countExamples(body);
+  checks3.push({
+    check: "examples_count",
+    level: "ok",
+    message: `Found ${exampleCount} example heading${exampleCount === 1 ? "" : "s"}`
+  });
+  if (words > DEFAULT_SKILL_MD_WARNING_WORDS && referenceFiles.length < 2) {
+    checks3.push({
+      check: "progressive_disclosure",
+      level: "warning",
+      message: `SKILL.md body is ${words} words but references/ has ${referenceFiles.length} file${referenceFiles.length === 1 ? "" : "s"}; move long sections into references/ so the always-loaded body stays lean`
+    });
+  } else if (isEmptyDir(join2(skillPath, "scripts")) || isEmptyDir(join2(skillPath, "assets"))) {
+    checks3.push({
+      check: "progressive_disclosure",
+      level: "ok",
+      message: "scripts/ or assets/ exists but is empty; add content or remove the empty directory"
+    });
+  } else {
+    checks3.push({
+      check: "progressive_disclosure",
+      level: "ok",
+      message: "Progressive disclosure looks good"
+    });
+  }
+  const summary = { ok: 0, warning: 0, error: 0 };
+  for (const check2 of checks3)
+    summary[check2.level] += 1;
+  return { checks: checks3, summary };
+}
+
 // lib/utils.ts
-import { readFileSync as readFileSync2 } from "fs";
-import { join as join2 } from "path";
+import { readFileSync as readFileSync3 } from "fs";
+import { join as join3 } from "path";
 function parseSkillMd(skillPath) {
-  const content = readFileSync2(join2(skillPath, "SKILL.md"), "utf-8");
+  const content = readFileSync3(join3(skillPath, "SKILL.md"), "utf-8");
   const lines = content.split(`
 `);
   if (lines[0].trim() !== "---") {
@@ -12527,15 +12776,15 @@ function parseSkillMd(skillPath) {
 // lib/run-eval.ts
 import {
   cpSync,
-  existsSync as existsSync2,
+  existsSync as existsSync3,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
+  readdirSync as readdirSync2,
   rmSync,
   symlinkSync,
   writeFileSync
 } from "fs";
-import { dirname, join as join3, parse as parse5 } from "path";
+import { dirname, join as join4, parse as parse5 } from "path";
 import { randomBytes } from "crypto";
 import { tmpdir as osTmpdir } from "os";
 
@@ -12686,9 +12935,9 @@ function findProjectRoot(cwd) {
   let current = cwd ?? process.cwd();
   const { root } = parse5(current);
   while (true) {
-    if (existsSync2(join3(current, ".opencode")))
+    if (existsSync3(join4(current, ".opencode")))
       return current;
-    if (existsSync2(join3(current, ".claude")))
+    if (existsSync3(join4(current, ".claude")))
       return current;
     const parent = dirname(current);
     if (parent === current || parent === root)
@@ -12705,25 +12954,25 @@ function linkOrCopyConfigEntry(source, target, isDirectory) {
   }
 }
 function symlinkProjectOpenCodeConfig(projectRoot, evalRoot, skillName) {
-  const sourceOpenCode = join3(projectRoot, ".opencode");
-  if (!existsSync2(sourceOpenCode))
+  const sourceOpenCode = join4(projectRoot, ".opencode");
+  if (!existsSync3(sourceOpenCode))
     return;
-  const targetOpenCode = join3(evalRoot, ".opencode");
+  const targetOpenCode = join4(evalRoot, ".opencode");
   mkdirSync(targetOpenCode, { recursive: true });
-  for (const entry of readdirSync(sourceOpenCode, { withFileTypes: true })) {
+  for (const entry of readdirSync2(sourceOpenCode, { withFileTypes: true })) {
     if (entry.name === "skills")
       continue;
-    linkOrCopyConfigEntry(join3(sourceOpenCode, entry.name), join3(targetOpenCode, entry.name), entry.isDirectory());
+    linkOrCopyConfigEntry(join4(sourceOpenCode, entry.name), join4(targetOpenCode, entry.name), entry.isDirectory());
   }
-  const sourceSkills = join3(sourceOpenCode, "skills");
-  if (!existsSync2(sourceSkills))
+  const sourceSkills = join4(sourceOpenCode, "skills");
+  if (!existsSync3(sourceSkills))
     return;
-  const targetSkills = join3(targetOpenCode, "skills");
+  const targetSkills = join4(targetOpenCode, "skills");
   mkdirSync(targetSkills, { recursive: true });
-  for (const entry of readdirSync(sourceSkills, { withFileTypes: true })) {
+  for (const entry of readdirSync2(sourceSkills, { withFileTypes: true })) {
     if (entry.name === skillName)
       continue;
-    linkOrCopyConfigEntry(join3(sourceSkills, entry.name), join3(targetSkills, entry.name), entry.isDirectory());
+    linkOrCopyConfigEntry(join4(sourceSkills, entry.name), join4(targetSkills, entry.name), entry.isDirectory());
   }
 }
 async function runSingleQuery(query, skillName, skillDescription, timeout, projectRoot, agent, triggerOnly, model) {
@@ -12732,9 +12981,9 @@ async function runSingleQuery(query, skillName, skillDescription, timeout, proje
   }
   const uniqueId = randomBytes(4).toString("hex");
   const cleanName = `${skillName}-skill-${uniqueId}`;
-  const evalRoot = mkdtempSync(join3(osTmpdir(), "opencode-skill-eval-"));
-  const skillsDir = join3(evalRoot, ".opencode", "skills", cleanName);
-  const skillFile = join3(skillsDir, "SKILL.md");
+  const evalRoot = mkdtempSync(join4(osTmpdir(), "opencode-skill-eval-"));
+  const skillsDir = join4(evalRoot, ".opencode", "skills", cleanName);
+  const skillFile = join4(skillsDir, "SKILL.md");
   try {
     symlinkProjectOpenCodeConfig(projectRoot, evalRoot, skillName);
     mkdirSync(skillsDir, { recursive: true });
@@ -12816,7 +13065,7 @@ async function runSingleQuery(query, skillName, skillDescription, timeout, proje
     }
     return triggered;
   } finally {
-    if (existsSync2(evalRoot)) {
+    if (existsSync3(evalRoot)) {
       rmSync(evalRoot, { recursive: true, force: true });
     }
   }
@@ -12919,7 +13168,7 @@ async function runEval(opts) {
 
 // lib/improve-description.ts
 import { mkdirSync as mkdirSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 import { tmpdir } from "os";
 import { randomBytes as randomBytes2 } from "crypto";
 
@@ -12959,7 +13208,7 @@ function formatFailureDiagnostics(diagnostics) {
 
 // lib/improve-description.ts
 async function callOpenCode(prompt, model, timeout = 300) {
-  const tmpPath = join4(tmpdir(), `skill-creator-${randomBytes2(6).toString("hex")}.md`);
+  const tmpPath = join5(tmpdir(), `skill-creator-${randomBytes2(6).toString("hex")}.md`);
   writeFileSync2(tmpPath, prompt);
   try {
     const cmd = ["opencode", "run", "--format", "json"];
@@ -13174,7 +13423,7 @@ Please respond with only the new description text in <new_description> tags, not
   transcript.final_description = description;
   if (logDir) {
     mkdirSync2(logDir, { recursive: true });
-    const logFile = join4(logDir, `improve_iter_${iteration ?? "unknown"}.json`);
+    const logFile = join5(logDir, `improve_iter_${iteration ?? "unknown"}.json`);
     writeFileSync2(logFile, JSON.stringify(transcript, null, 2));
   }
   return description;
@@ -13695,8 +13944,8 @@ Exit reason: ${exitReason}`);
 }
 
 // lib/aggregate.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3, readdirSync as readdirSync2, statSync } from "fs";
-import { join as join5, basename } from "path";
+import { existsSync as existsSync4, readFileSync as readFileSync4, readdirSync as readdirSync3, statSync } from "fs";
+import { join as join6, basename } from "path";
 function compareEvalIds(a, b) {
   const parseNumeric = (value) => {
     if (typeof value === "number" && Number.isFinite(value))
@@ -13762,17 +14011,17 @@ function calculateStats(values) {
   };
 }
 function sortedDirs(dir, pattern) {
-  if (!existsSync3(dir))
+  if (!existsSync4(dir))
     return [];
-  return readdirSync2(dir).filter((name) => {
-    const full = join5(dir, name);
+  return readdirSync3(dir).filter((name) => {
+    const full = join6(dir, name);
     return statSync(full).isDirectory() && (!pattern || pattern.test(name));
-  }).sort().map((name) => join5(dir, name));
+  }).sort().map((name) => join6(dir, name));
 }
 function loadRunResults(benchmarkDir) {
-  const runsDir = join5(benchmarkDir, "runs");
+  const runsDir = join6(benchmarkDir, "runs");
   let searchDir;
-  if (existsSync3(runsDir)) {
+  if (existsSync4(runsDir)) {
     searchDir = runsDir;
   } else if (sortedDirs(benchmarkDir, /^eval-/).length > 0) {
     searchDir = benchmarkDir;
@@ -13783,11 +14032,11 @@ function loadRunResults(benchmarkDir) {
   const results = {};
   const evalIds = new Set;
   for (const [evalIdx, evalDir] of sortedDirs(searchDir, /^eval-/).entries()) {
-    const metadataPath = join5(evalDir, "eval_metadata.json");
+    const metadataPath = join6(evalDir, "eval_metadata.json");
     let evalId = evalIdx;
-    if (existsSync3(metadataPath)) {
+    if (existsSync4(metadataPath)) {
       try {
-        const meta = JSON.parse(readFileSync3(metadataPath, "utf-8"));
+        const meta = JSON.parse(readFileSync4(metadataPath, "utf-8"));
         evalId = meta.eval_id ?? evalIdx;
       } catch {}
     } else {
@@ -13810,14 +14059,14 @@ function loadRunResults(benchmarkDir) {
           continue;
         }
         const runNumber = parsedRunNumber;
-        const gradingFile = join5(runDir, "grading.json");
-        if (!existsSync3(gradingFile)) {
+        const gradingFile = join6(runDir, "grading.json");
+        if (!existsSync4(gradingFile)) {
           console.error(`Warning: grading.json not found in ${runDir}`);
           continue;
         }
         let grading;
         try {
-          grading = JSON.parse(readFileSync3(gradingFile, "utf-8"));
+          grading = JSON.parse(readFileSync4(gradingFile, "utf-8"));
         } catch (e) {
           console.error(`Warning: Invalid JSON in ${gradingFile}: ${e}`);
           continue;
@@ -13839,10 +14088,10 @@ function loadRunResults(benchmarkDir) {
         };
         const timing = grading.timing ?? {};
         result.time_seconds = timing.total_duration_seconds ?? 0;
-        const timingFile = join5(runDir, "timing.json");
-        if (result.time_seconds === 0 && existsSync3(timingFile)) {
+        const timingFile = join6(runDir, "timing.json");
+        if (result.time_seconds === 0 && existsSync4(timingFile)) {
           try {
-            const timingData = JSON.parse(readFileSync3(timingFile, "utf-8"));
+            const timingData = JSON.parse(readFileSync4(timingFile, "utf-8"));
             result.time_seconds = timingData.total_duration_seconds ?? 0;
             result.tokens = timingData.total_tokens ?? 0;
           } catch {}
@@ -14002,15 +14251,15 @@ function generateMarkdown(benchmark) {
 // lib/review-server.ts
 import { spawn as spawn2 } from "child_process";
 import {
-  existsSync as existsSync4,
+  existsSync as existsSync5,
   mkdirSync as mkdirSync3,
-  readFileSync as readFileSync4,
-  readdirSync as readdirSync3,
+  readFileSync as readFileSync5,
+  readdirSync as readdirSync4,
   statSync as statSync2,
   writeFileSync as writeFileSync5
 } from "fs";
 import { createServer } from "http";
-import { basename as basename2, extname, join as join6, relative } from "path";
+import { basename as basename2, extname, join as join7, relative as relative2 } from "path";
 var METADATA_FILES = new Set(["transcript.md", "user_notes.md", "metrics.json"]);
 var TEXT_EXTENSIONS = new Set([
   ".txt",
@@ -14077,7 +14326,7 @@ function embedFile(filePath) {
   const mime = getMimeType(filePath);
   if (TEXT_EXTENSIONS.has(ext)) {
     try {
-      const content = readFileSync4(filePath, "utf-8");
+      const content = readFileSync5(filePath, "utf-8");
       return { name, type: "text", content };
     } catch {
       return { name, type: "error", content: "(Error reading file)" };
@@ -14085,7 +14334,7 @@ function embedFile(filePath) {
   }
   if (IMAGE_EXTENSIONS.has(ext)) {
     try {
-      const raw = readFileSync4(filePath);
+      const raw = readFileSync5(filePath);
       const b64 = raw.toString("base64");
       return { name, type: "image", mime, data_uri: `data:${mime};base64,${b64}` };
     } catch {
@@ -14094,7 +14343,7 @@ function embedFile(filePath) {
   }
   if (ext === ".pdf") {
     try {
-      const raw = readFileSync4(filePath);
+      const raw = readFileSync5(filePath);
       const b64 = raw.toString("base64");
       return { name, type: "pdf", data_uri: `data:${mime};base64,${b64}` };
     } catch {
@@ -14103,7 +14352,7 @@ function embedFile(filePath) {
   }
   if (ext === ".xlsx") {
     try {
-      const raw = readFileSync4(filePath);
+      const raw = readFileSync5(filePath);
       const b64 = raw.toString("base64");
       return { name, type: "xlsx", data_b64: b64 };
     } catch {
@@ -14111,7 +14360,7 @@ function embedFile(filePath) {
     }
   }
   try {
-    const raw = readFileSync4(filePath);
+    const raw = readFileSync5(filePath);
     const b64 = raw.toString("base64");
     return { name, type: "binary", mime, data_uri: `data:${mime};base64,${b64}` };
   } catch {
@@ -14119,19 +14368,19 @@ function embedFile(filePath) {
   }
 }
 function findRunsRecursive(root, current, runs) {
-  if (!existsSync4(current) || !statSync2(current).isDirectory())
+  if (!existsSync5(current) || !statSync2(current).isDirectory())
     return;
-  const outputsDir = join6(current, "outputs");
-  if (existsSync4(outputsDir) && statSync2(outputsDir).isDirectory()) {
+  const outputsDir = join7(current, "outputs");
+  if (existsSync5(outputsDir) && statSync2(outputsDir).isDirectory()) {
     const run = buildRun(root, current);
     if (run)
       runs.push(run);
     return;
   }
   const skip = new Set(["node_modules", ".git", "__pycache__", "skill", "inputs"]);
-  const entries = readdirSync3(current).sort();
+  const entries = readdirSync4(current).sort();
   for (const entry of entries) {
-    const full = join6(current, entry);
+    const full = join7(current, entry);
     if (statSync2(full).isDirectory() && !skip.has(entry)) {
       findRunsRecursive(root, full, runs);
     }
@@ -14152,10 +14401,10 @@ function findRuns(workspace) {
 function buildRun(root, runDir) {
   let prompt = "";
   let evalId = null;
-  for (const candidate of [join6(runDir, "eval_metadata.json"), join6(runDir, "..", "eval_metadata.json")]) {
-    if (existsSync4(candidate)) {
+  for (const candidate of [join7(runDir, "eval_metadata.json"), join7(runDir, "..", "eval_metadata.json")]) {
+    if (existsSync5(candidate)) {
       try {
-        const metadata = JSON.parse(readFileSync4(candidate, "utf-8"));
+        const metadata = JSON.parse(readFileSync5(candidate, "utf-8"));
         prompt = metadata.prompt ?? "";
         evalId = metadata.eval_id ?? null;
       } catch {}
@@ -14164,10 +14413,10 @@ function buildRun(root, runDir) {
     }
   }
   if (!prompt) {
-    for (const candidate of [join6(runDir, "transcript.md"), join6(runDir, "outputs", "transcript.md")]) {
-      if (existsSync4(candidate)) {
+    for (const candidate of [join7(runDir, "transcript.md"), join7(runDir, "outputs", "transcript.md")]) {
+      if (existsSync5(candidate)) {
         try {
-          const text = readFileSync4(candidate, "utf-8");
+          const text = readFileSync5(candidate, "utf-8");
           const match = text.match(/## Eval Prompt\n\n([\s\S]*?)(?=\n##|$)/);
           if (match)
             prompt = match[1].trim();
@@ -14179,23 +14428,23 @@ function buildRun(root, runDir) {
   }
   if (!prompt)
     prompt = "(No prompt found)";
-  const runId = relative(root, runDir).replace(/[/\\]/g, "-");
-  const outputsDir = join6(runDir, "outputs");
+  const runId = relative2(root, runDir).replace(/[/\\]/g, "-");
+  const outputsDir = join7(runDir, "outputs");
   const outputFiles = [];
-  if (existsSync4(outputsDir) && statSync2(outputsDir).isDirectory()) {
-    const files = readdirSync3(outputsDir).sort();
+  if (existsSync5(outputsDir) && statSync2(outputsDir).isDirectory()) {
+    const files = readdirSync4(outputsDir).sort();
     for (const f of files) {
-      const full = join6(outputsDir, f);
+      const full = join7(outputsDir, f);
       if (statSync2(full).isFile() && !METADATA_FILES.has(f)) {
         outputFiles.push(embedFile(full));
       }
     }
   }
   let grading = null;
-  for (const candidate of [join6(runDir, "grading.json"), join6(runDir, "..", "grading.json")]) {
-    if (existsSync4(candidate)) {
+  for (const candidate of [join7(runDir, "grading.json"), join7(runDir, "..", "grading.json")]) {
+    if (existsSync5(candidate)) {
       try {
-        grading = JSON.parse(readFileSync4(candidate, "utf-8"));
+        grading = JSON.parse(readFileSync5(candidate, "utf-8"));
       } catch {}
       if (grading)
         break;
@@ -14231,10 +14480,10 @@ function isValidFeedbackPayload(value) {
 function loadPreviousIteration(workspace) {
   const result = {};
   const feedbackMap = {};
-  const feedbackPath = join6(workspace, "feedback.json");
-  if (existsSync4(feedbackPath)) {
+  const feedbackPath = join7(workspace, "feedback.json");
+  if (existsSync5(feedbackPath)) {
     try {
-      const data = JSON.parse(readFileSync4(feedbackPath, "utf-8"));
+      const data = JSON.parse(readFileSync5(feedbackPath, "utf-8"));
       for (const r of data.reviews ?? []) {
         if (r.feedback?.trim()) {
           feedbackMap[r.run_id] = r.feedback;
@@ -14258,7 +14507,7 @@ function loadPreviousIteration(workspace) {
 }
 function generateReviewHtml(opts) {
   const { runs, skillName, previous, benchmark, templatePath } = opts;
-  const template = readFileSync4(templatePath, "utf-8");
+  const template = readFileSync5(templatePath, "utf-8");
   const previousFeedback = {};
   const previousOutputs = {};
   if (previous) {
@@ -14367,9 +14616,9 @@ async function handleReviewRequest(method, requestUrl, requestBody, context) {
   if (method === "GET" && (url2.pathname === "/" || url2.pathname === "/index.html")) {
     const runs = findRuns(context.workspace);
     let benchmark = null;
-    if (context.benchmarkPath && existsSync4(context.benchmarkPath)) {
+    if (context.benchmarkPath && existsSync5(context.benchmarkPath)) {
       try {
-        benchmark = JSON.parse(readFileSync4(context.benchmarkPath, "utf-8"));
+        benchmark = JSON.parse(readFileSync5(context.benchmarkPath, "utf-8"));
       } catch {}
     }
     const html = generateReviewHtml({
@@ -14383,9 +14632,9 @@ async function handleReviewRequest(method, requestUrl, requestBody, context) {
   }
   if (method === "GET" && url2.pathname === "/api/feedback") {
     let data = "{}";
-    if (existsSync4(context.feedbackPath)) {
+    if (existsSync5(context.feedbackPath)) {
       try {
-        data = readFileSync4(context.feedbackPath, "utf-8");
+        data = readFileSync5(context.feedbackPath, "utf-8");
       } catch {}
     }
     return textResponse(data, 200, "application/json");
@@ -14462,13 +14711,13 @@ async function serveReview(opts) {
     templatePath,
     openBrowser = true
   } = opts;
-  if (!existsSync4(workspace) || !statSync2(workspace).isDirectory()) {
+  if (!existsSync5(workspace) || !statSync2(workspace).isDirectory()) {
     throw new Error(`Workspace is not a directory: ${workspace}`);
   }
   const skillName = skillNameOpt ?? basename2(workspace).replace(/-workspace$/, "");
-  const feedbackPath = join6(workspace, "feedback.json");
+  const feedbackPath = join7(workspace, "feedback.json");
   let previous = null;
-  if (previousWorkspace && existsSync4(previousWorkspace)) {
+  if (previousWorkspace && existsSync5(previousWorkspace)) {
     previous = loadPreviousIteration(previousWorkspace);
   }
   await killPort(port);
@@ -14529,13 +14778,13 @@ function exportStaticReview(opts) {
     throw new Error(`No runs found in ${workspace}`);
   }
   let previous = null;
-  if (previousWorkspace && existsSync4(previousWorkspace)) {
+  if (previousWorkspace && existsSync5(previousWorkspace)) {
     previous = loadPreviousIteration(previousWorkspace);
   }
   let benchmark = null;
-  if (benchmarkPath && existsSync4(benchmarkPath)) {
+  if (benchmarkPath && existsSync5(benchmarkPath)) {
     try {
-      benchmark = JSON.parse(readFileSync4(benchmarkPath, "utf-8"));
+      benchmark = JSON.parse(readFileSync5(benchmarkPath, "utf-8"));
     } catch {}
   }
   const html = generateReviewHtml({
@@ -14545,31 +14794,31 @@ function exportStaticReview(opts) {
     benchmark,
     templatePath
   });
-  const parentDir = join6(outputPath, "..");
+  const parentDir = join7(outputPath, "..");
   mkdirSync3(parentDir, { recursive: true });
   writeFileSync5(outputPath, html);
   return outputPath;
 }
 
 // lib/workflow-guard.ts
-import { existsSync as existsSync5, readdirSync as readdirSync4, statSync as statSync3 } from "fs";
-import { basename as basename3, join as join7 } from "path";
+import { existsSync as existsSync6, readdirSync as readdirSync5, statSync as statSync3 } from "fs";
+import { basename as basename3, join as join8 } from "path";
 function sortedDirs2(dir, pattern) {
-  if (!existsSync5(dir) || !statSync3(dir).isDirectory())
+  if (!existsSync6(dir) || !statSync3(dir).isDirectory())
     return [];
-  return readdirSync4(dir).map((name) => join7(dir, name)).filter((full) => statSync3(full).isDirectory()).filter((full) => pattern ? pattern.test(basename3(full)) : true).sort();
+  return readdirSync5(dir).map((name) => join8(dir, name)).filter((full) => statSync3(full).isDirectory()).filter((full) => pattern ? pattern.test(basename3(full)) : true).sort();
 }
 function hasAtLeastOneRun(configDir) {
   const runDirs = sortedDirs2(configDir, /^run-/);
   if (runDirs.length > 0)
     return true;
-  const outputsDir = join7(configDir, "outputs");
-  return existsSync5(outputsDir) && statSync3(outputsDir).isDirectory();
+  const outputsDir = join8(configDir, "outputs");
+  return existsSync6(outputsDir) && statSync3(outputsDir).isDirectory();
 }
 function validateComparisonWorkspace(workspace) {
   const issues = [];
   const foundConfigs = new Set;
-  if (!existsSync5(workspace)) {
+  if (!existsSync6(workspace)) {
     return {
       valid: false,
       evalCount: 0,
@@ -14600,7 +14849,7 @@ function validateComparisonWorkspace(workspace) {
   let searchRoot = workspace;
   let evalDirs = sortedDirs2(searchRoot, /^eval-/);
   if (evalDirs.length === 0) {
-    const runsRoot = join7(workspace, "runs");
+    const runsRoot = join8(workspace, "runs");
     const nested = sortedDirs2(runsRoot, /^eval-/);
     if (nested.length > 0) {
       searchRoot = runsRoot;
@@ -14614,21 +14863,21 @@ function validateComparisonWorkspace(workspace) {
     });
   }
   for (const evalDir of evalDirs) {
-    const withSkillDir = join7(evalDir, "with_skill");
-    const withoutSkillDir = join7(evalDir, "without_skill");
-    const oldSkillDir = join7(evalDir, "old_skill");
-    if (existsSync5(withSkillDir) && statSync3(withSkillDir).isDirectory()) {
+    const withSkillDir = join8(evalDir, "with_skill");
+    const withoutSkillDir = join8(evalDir, "without_skill");
+    const oldSkillDir = join8(evalDir, "old_skill");
+    if (existsSync6(withSkillDir) && statSync3(withSkillDir).isDirectory()) {
       foundConfigs.add("with_skill");
     }
-    if (existsSync5(withoutSkillDir) && statSync3(withoutSkillDir).isDirectory()) {
+    if (existsSync6(withoutSkillDir) && statSync3(withoutSkillDir).isDirectory()) {
       foundConfigs.add("without_skill");
     }
-    if (existsSync5(oldSkillDir) && statSync3(oldSkillDir).isDirectory()) {
+    if (existsSync6(oldSkillDir) && statSync3(oldSkillDir).isDirectory()) {
       foundConfigs.add("old_skill");
     }
-    const hasWithSkill = existsSync5(withSkillDir) && statSync3(withSkillDir).isDirectory() && hasAtLeastOneRun(withSkillDir);
-    const hasWithoutSkill = existsSync5(withoutSkillDir) && statSync3(withoutSkillDir).isDirectory() && hasAtLeastOneRun(withoutSkillDir);
-    const hasOldSkill = existsSync5(oldSkillDir) && statSync3(oldSkillDir).isDirectory() && hasAtLeastOneRun(oldSkillDir);
+    const hasWithSkill = existsSync6(withSkillDir) && statSync3(withSkillDir).isDirectory() && hasAtLeastOneRun(withSkillDir);
+    const hasWithoutSkill = existsSync6(withoutSkillDir) && statSync3(withoutSkillDir).isDirectory() && hasAtLeastOneRun(withoutSkillDir);
+    const hasOldSkill = existsSync6(oldSkillDir) && statSync3(oldSkillDir).isDirectory() && hasAtLeastOneRun(oldSkillDir);
     if (!hasWithSkill) {
       issues.push({
         evalDir: basename3(evalDir),
@@ -14653,19 +14902,19 @@ function validateComparisonWorkspace(workspace) {
 
 // lib/gold-standards.ts
 import {
-  existsSync as existsSync6,
+  existsSync as existsSync7,
   mkdirSync as mkdirSync4,
-  readFileSync as readFileSync5,
+  readFileSync as readFileSync6,
   renameSync,
   writeFileSync as writeFileSync6
 } from "fs";
 import { randomUUID } from "crypto";
-import { basename as basename4, dirname as dirname2, join as join8 } from "path";
+import { basename as basename4, dirname as dirname2, join as join9 } from "path";
 function readStore(path) {
-  if (!existsSync6(path))
+  if (!existsSync7(path))
     return [];
   try {
-    return JSON.parse(readFileSync5(path, "utf-8"));
+    return JSON.parse(readFileSync6(path, "utf-8"));
   } catch (error45) {
     if (error45 instanceof SyntaxError) {
       throw new Error(`Failed to read gold standards store at ${path}: malformed JSON`);
@@ -14679,7 +14928,7 @@ function sortStandards(standards) {
 function writeStore(path, standards) {
   const dir = dirname2(path);
   mkdirSync4(dir, { recursive: true });
-  const tmpPath = join8(dir, `.${basename4(path)}.${process.pid}.${Date.now()}.tmp`);
+  const tmpPath = join9(dir, `.${basename4(path)}.${process.pid}.${Date.now()}.tmp`);
   writeFileSync6(tmpPath, JSON.stringify(sortStandards(standards).slice(0, 50), null, 2));
   renameSync(tmpPath, path);
 }
@@ -14722,24 +14971,24 @@ function getGoldAdvice(path) {
 // lib/skill-install.ts
 import {
   copyFileSync,
-  existsSync as existsSync7,
+  existsSync as existsSync8,
   mkdirSync as mkdirSync5,
-  readdirSync as readdirSync5,
-  readFileSync as readFileSync6,
+  readdirSync as readdirSync6,
+  readFileSync as readFileSync7,
   renameSync as renameSync2,
   rmSync as rmSync2,
   statSync as statSync4,
   writeFileSync as writeFileSync7
 } from "fs";
-import { join as join9 } from "path";
+import { join as join10 } from "path";
 var SKILL_NAME = "opencode-skill-creator";
 var LEGACY_SKILL_NAME = "skill-creator";
 var INSTALL_VERSION_FILE = ".opencode-skill-creator-version";
 function copyDirRecursive(src, dest) {
   mkdirSync5(dest, { recursive: true });
-  for (const entry of readdirSync5(src)) {
-    const srcPath = join9(src, entry);
-    const destPath = join9(dest, entry);
+  for (const entry of readdirSync6(src)) {
+    const srcPath = join10(src, entry);
+    const destPath = join10(dest, entry);
     if (statSync4(srcPath).isDirectory()) {
       copyDirRecursive(srcPath, destPath);
     } else {
@@ -14751,61 +15000,61 @@ function defaultBackupTimestamp() {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "");
 }
 function uniqueBackupDir(skillsRoot, timestamp) {
-  const base = join9(skillsRoot, `${LEGACY_SKILL_NAME}.opencode-skill-creator-backup-${timestamp}`);
-  if (!existsSync7(base))
+  const base = join10(skillsRoot, `${LEGACY_SKILL_NAME}.opencode-skill-creator-backup-${timestamp}`);
+  if (!existsSync8(base))
     return base;
   for (let index = 1;index < 1000; index += 1) {
     const candidate = `${base}-${index}`;
-    if (!existsSync7(candidate))
+    if (!existsSync8(candidate))
       return candidate;
   }
   throw new Error("Could not find an available legacy skill backup path");
 }
 function archiveLegacySkill(args) {
-  const legacyVersionFile = join9(args.legacySkillDir, INSTALL_VERSION_FILE);
-  if (!existsSync7(legacyVersionFile))
+  const legacyVersionFile = join10(args.legacySkillDir, INSTALL_VERSION_FILE);
+  if (!existsSync8(legacyVersionFile))
     return;
   const backupDir = uniqueBackupDir(args.skillsRoot, args.backupTimestamp());
-  const backupSkillFile = join9(args.legacySkillDir, "SKILL.md");
-  if (existsSync7(backupSkillFile)) {
-    renameSync2(backupSkillFile, join9(args.legacySkillDir, "SKILL.md.backup"));
+  const backupSkillFile = join10(args.legacySkillDir, "SKILL.md");
+  if (existsSync8(backupSkillFile)) {
+    renameSync2(backupSkillFile, join10(args.legacySkillDir, "SKILL.md.backup"));
   }
   renameSync2(args.legacySkillDir, backupDir);
 }
 function ensureBundledSkillInstalled(options) {
-  const skillsRoot = join9(options.configDir, "opencode", "skills");
-  const skillsDir = join9(skillsRoot, SKILL_NAME);
-  const legacySkillDir = join9(skillsRoot, LEGACY_SKILL_NAME);
-  const marker = join9(skillsDir, "SKILL.md");
-  const versionFile = join9(skillsDir, INSTALL_VERSION_FILE);
-  const userSkillFile = join9(skillsDir, "SKILL.md");
-  const userSkillBackup = join9(skillsDir, "SKILL.md.user-backup");
-  if (!existsSync7(options.bundledSkillDir))
+  const skillsRoot = join10(options.configDir, "opencode", "skills");
+  const skillsDir = join10(skillsRoot, SKILL_NAME);
+  const legacySkillDir = join10(skillsRoot, LEGACY_SKILL_NAME);
+  const marker = join10(skillsDir, "SKILL.md");
+  const versionFile = join10(skillsDir, INSTALL_VERSION_FILE);
+  const userSkillFile = join10(skillsDir, "SKILL.md");
+  const userSkillBackup = join10(skillsDir, "SKILL.md.user-backup");
+  if (!existsSync8(options.bundledSkillDir))
     return;
   let installedVersion = "";
-  if (existsSync7(versionFile)) {
+  if (existsSync8(versionFile)) {
     try {
-      installedVersion = readFileSync6(versionFile, "utf-8").trim();
+      installedVersion = readFileSync7(versionFile, "utf-8").trim();
     } catch {
       installedVersion = "";
     }
   }
-  const shouldInstall = !existsSync7(marker) || installedVersion !== options.packageVersion;
+  const shouldInstall = !existsSync8(marker) || installedVersion !== options.packageVersion;
   const tmpInstallDir = `${skillsDir}.tmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   try {
     if (shouldInstall) {
       copyDirRecursive(options.bundledSkillDir, tmpInstallDir);
-      if (existsSync7(userSkillFile)) {
+      if (existsSync8(userSkillFile)) {
         try {
           copyFileSync(userSkillFile, userSkillBackup);
         } catch (error45) {
           options.onError?.(`Failed to back up existing user skill file before updating ${SKILL_NAME}`, error45);
         }
         try {
-          copyFileSync(userSkillFile, join9(tmpInstallDir, "SKILL.md"));
+          copyFileSync(userSkillFile, join10(tmpInstallDir, "SKILL.md"));
         } catch {}
       }
-      if (!existsSync7(skillsDir)) {
+      if (!existsSync8(skillsDir)) {
         renameSync2(tmpInstallDir, skillsDir);
       } else {
         copyDirRecursive(tmpInstallDir, skillsDir);
@@ -14813,7 +15062,7 @@ function ensureBundledSkillInstalled(options) {
       writeFileSync7(versionFile, `${options.packageVersion}
 `);
     }
-    if (existsSync7(legacySkillDir)) {
+    if (existsSync8(legacySkillDir)) {
       archiveLegacySkill({
         skillsRoot,
         legacySkillDir,
@@ -14823,7 +15072,7 @@ function ensureBundledSkillInstalled(options) {
   } catch (error45) {
     options.onError?.("Failed to install opencode-skill-creator skill", error45);
   } finally {
-    if (existsSync7(tmpInstallDir)) {
+    if (existsSync8(tmpInstallDir)) {
       rmSync2(tmpInstallDir, { recursive: true, force: true });
     }
   }
@@ -14831,17 +15080,17 @@ function ensureBundledSkillInstalled(options) {
 
 // skill-creator.ts
 var PLUGIN_DIR = dirname3(fileURLToPath(import.meta.url));
-var TEMPLATES_DIR = join10(PLUGIN_DIR, "templates");
-var BUNDLED_SKILL_DIR = join10(PLUGIN_DIR, "skill");
-var PACKAGE_JSON_PATH = join10(PLUGIN_DIR, "package.json");
+var TEMPLATES_DIR = join11(PLUGIN_DIR, "templates");
+var BUNDLED_SKILL_DIR = join11(PLUGIN_DIR, "skill");
+var PACKAGE_JSON_PATH = join11(PLUGIN_DIR, "package.json");
 var AUTO_UPDATE_TTL_MS = 24 * 60 * 60 * 1000;
 var AUTO_UPDATE_STATUS_FILE = "opencode-skill-creator-update-check.json";
 var NPM_REGISTRY_URL = "https://registry.npmjs.org/opencode-skill-creator/latest";
 var AUTO_UPDATE_TIMEOUT_MS = 2500;
-var GOLD_STANDARDS_PATH = join10(homedir(), ".config", "opencode", "gold-standards.json");
+var GOLD_STANDARDS_PATH = join11(homedir(), ".config", "opencode", "gold-standards.json");
 var PACKAGE_VERSION = (() => {
   try {
-    const pkg = JSON.parse(readFileSync7(PACKAGE_JSON_PATH, "utf-8"));
+    const pkg = JSON.parse(readFileSync8(PACKAGE_JSON_PATH, "utf-8"));
     return pkg.version ?? "0.0.0";
   } catch {
     return "0.0.0";
@@ -14864,8 +15113,8 @@ function prepareReviewLaunch(args) {
   if (!resolvedBenchmarkPath) {
     try {
       const benchmark = generateBenchmark(args.workspace, args.skillName ?? "", "");
-      const jsonPath = join10(args.workspace, "benchmark.json");
-      const mdPath = join10(args.workspace, "benchmark.md");
+      const jsonPath = join11(args.workspace, "benchmark.json");
+      const mdPath = join11(args.workspace, "benchmark.md");
       writeFileSync8(jsonPath, JSON.stringify(benchmark, null, 2));
       writeFileSync8(mdPath, generateMarkdown(benchmark));
       resolvedBenchmarkPath = jsonPath;
@@ -14884,14 +15133,14 @@ function normalizeDescriptionOverride(value) {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 function getAutoUpdatePaths() {
-  const cacheDir = process.env.XDG_CACHE_HOME || join10(homedir(), ".cache");
-  const configDir = process.env.XDG_CONFIG_HOME || join10(homedir(), ".config");
-  const packageCacheRoot = join10(cacheDir, "opencode", "packages", "opencode-skill-creator@latest");
+  const cacheDir = process.env.XDG_CACHE_HOME || join11(homedir(), ".cache");
+  const configDir = process.env.XDG_CONFIG_HOME || join11(homedir(), ".config");
+  const packageCacheRoot = join11(cacheDir, "opencode", "packages", "opencode-skill-creator@latest");
   return {
     packageCacheRoot,
-    cachedPackageDir: join10(packageCacheRoot, "node_modules", "opencode-skill-creator"),
-    cachedPackageJson: join10(packageCacheRoot, "node_modules", "opencode-skill-creator", "package.json"),
-    statusPath: join10(configDir, "opencode", AUTO_UPDATE_STATUS_FILE)
+    cachedPackageDir: join11(packageCacheRoot, "node_modules", "opencode-skill-creator"),
+    cachedPackageJson: join11(packageCacheRoot, "node_modules", "opencode-skill-creator", "package.json"),
+    statusPath: join11(configDir, "opencode", AUTO_UPDATE_STATUS_FILE)
   };
 }
 function compareVersions(a, b) {
@@ -14911,7 +15160,7 @@ function compareVersions(a, b) {
 }
 function readAutoUpdateStatus(path) {
   try {
-    return JSON.parse(readFileSync7(path, "utf-8"));
+    return JSON.parse(readFileSync8(path, "utf-8"));
   } catch {
     return {};
   }
@@ -14925,8 +15174,8 @@ function writeAutoUpdateStatus(path, status) {
 }
 function isInsidePath(parent, child, pathModule = {
   isAbsolute,
-  relative: relative2,
-  sep
+  relative: relative3,
+  sep: sep2
 }) {
   const rel = pathModule.relative(parent, child);
   return rel === "" || !rel.startsWith("..") && !pathModule.isAbsolute(rel) && !rel.startsWith("/") && !rel.startsWith("\\") && !rel.includes(`..${pathModule.sep}`);
@@ -14973,7 +15222,7 @@ async function maybeAutoRefreshPluginCache(options = {}) {
       if (compareVersions(latestVersion, currentVersion) <= 0) {
         return { checked: true, cleared: false, reason: "up-to-date" };
       }
-      if (!existsSync8(paths.cachedPackageJson)) {
+      if (!existsSync9(paths.cachedPackageJson)) {
         return { checked: true, cleared: false, reason: "missing-cache" };
       }
       const currentPluginDir = options.currentPluginDir ?? PLUGIN_DIR;
@@ -14994,7 +15243,7 @@ var activeServers = new Map;
 var SkillCreatorPlugin = async (ctx) => {
   ensureBundledSkillInstalled({
     bundledSkillDir: BUNDLED_SKILL_DIR,
-    configDir: process.env.XDG_CONFIG_HOME || join10(homedir(), ".config"),
+    configDir: process.env.XDG_CONFIG_HOME || join11(homedir(), ".config"),
     packageVersion: PACKAGE_VERSION,
     onError: (message, error45) => console.warn(message, error45)
   });
@@ -15024,6 +15273,27 @@ var SkillCreatorPlugin = async (ctx) => {
             content: meta.fullContent,
             contentLength: meta.fullContent.length
           }, null, 2);
+        }
+      }),
+      skill_context_lint: tool({
+        description: "Lint a skill's context/token budget: SKILL.md size and estimated tokens, references count and depth, largest reference, duplicate sections, examples count, and progressive-disclosure suggestions. Budgets are configurable per call; warnings are advisory.",
+        args: {
+          skillPath: tool.schema.string().describe("Path to the skill directory containing SKILL.md"),
+          budgets: tool.schema.object({
+            skill_md: tool.schema.object({
+              warning_words: tool.schema.number().optional(),
+              error_words: tool.schema.number().nullable().optional()
+            }).optional(),
+            frequent_skill: tool.schema.object({
+              warning_words: tool.schema.number().optional()
+            }).optional(),
+            reference_depth: tool.schema.object({
+              warning: tool.schema.number().optional()
+            }).optional()
+          }).optional().describe("Optional budget overrides (defaults: skill_md.warning_words 500, skill_md.error_words null, frequent_skill.warning_words 250, reference_depth.warning 2)")
+        },
+        async execute(args) {
+          return JSON.stringify(lintSkillContext(args.skillPath, args.budgets), null, 2);
         }
       }),
       skill_add_gold_standard: tool({
@@ -15084,8 +15354,8 @@ var SkillCreatorPlugin = async (ctx) => {
           agent: tool.schema.string().optional().describe("OpenCode agent for trigger eval runs (default: build)")
         },
         async execute(args) {
-          const { readFileSync: readFileSync8 } = await import("fs");
-          const evalSet = JSON.parse(readFileSync8(args.evalSetPath, "utf-8"));
+          const { readFileSync: readFileSync9 } = await import("fs");
+          const evalSet = JSON.parse(readFileSync9(args.evalSetPath, "utf-8"));
           const validation = validateSkill(args.skillPath);
           if (!validation.valid) {
             throw new Error(`Invalid skill at ${args.skillPath}: ${validation.message}`);
@@ -15120,10 +15390,10 @@ var SkillCreatorPlugin = async (ctx) => {
           iteration: tool.schema.number().optional().describe("Current iteration number")
         },
         async execute(args) {
-          const { readFileSync: readFileSync8 } = await import("fs");
+          const { readFileSync: readFileSync9 } = await import("fs");
           const meta = parseSkillMd(args.skillPath);
-          const evalResults = JSON.parse(readFileSync8(args.evalResultsPath, "utf-8"));
-          const history = args.historyPath ? JSON.parse(readFileSync8(args.historyPath, "utf-8")) : [];
+          const evalResults = JSON.parse(readFileSync9(args.evalResultsPath, "utf-8"));
+          const history = args.historyPath ? JSON.parse(readFileSync9(args.historyPath, "utf-8")) : [];
           const newDescription = await improveDescription({
             skillName: meta.name,
             skillContent: meta.fullContent,
@@ -15156,8 +15426,8 @@ var SkillCreatorPlugin = async (ctx) => {
           logDir: tool.schema.string().optional().describe("Directory for improvement transcripts")
         },
         async execute(args) {
-          const { readFileSync: readFileSync8 } = await import("fs");
-          const evalSet = JSON.parse(readFileSync8(args.evalSetPath, "utf-8"));
+          const { readFileSync: readFileSync9 } = await import("fs");
+          const evalSet = JSON.parse(readFileSync9(args.evalSetPath, "utf-8"));
           const meta = parseSkillMd(args.skillPath);
           const projectRoot = findProjectRoot();
           await assertNoInstalledSkillConflict(meta.name, projectRoot);
@@ -15193,9 +15463,9 @@ var SkillCreatorPlugin = async (ctx) => {
         async execute(args) {
           const { writeFileSync: writeFileSync9 } = await import("fs");
           const benchmark = generateBenchmark(args.benchmarkDir, args.skillName ?? "", args.skillPath ?? "");
-          const jsonPath = args.outputPath ?? join10(args.benchmarkDir, "benchmark.json");
+          const jsonPath = args.outputPath ?? join11(args.benchmarkDir, "benchmark.json");
           writeFileSync9(jsonPath, JSON.stringify(benchmark, null, 2));
-          const mdPath = args.markdownPath ?? join10(args.benchmarkDir, "benchmark.md");
+          const mdPath = args.markdownPath ?? join11(args.benchmarkDir, "benchmark.md");
           writeFileSync9(mdPath, generateMarkdown(benchmark));
           return JSON.stringify({
             benchmarkJsonPath: jsonPath,
@@ -15213,8 +15483,8 @@ var SkillCreatorPlugin = async (ctx) => {
           autoRefresh: tool.schema.boolean().optional().describe("Add auto-refresh meta tag (default: false)")
         },
         async execute(args) {
-          const { readFileSync: readFileSync8, writeFileSync: writeFileSync9 } = await import("fs");
-          const data = JSON.parse(readFileSync8(args.dataPath, "utf-8"));
+          const { readFileSync: readFileSync9, writeFileSync: writeFileSync9 } = await import("fs");
+          const data = JSON.parse(readFileSync9(args.dataPath, "utf-8"));
           const html = generateHtml(data, {
             autoRefresh: args.autoRefresh ?? false,
             skillName: args.skillName ?? ""
@@ -15240,7 +15510,7 @@ var SkillCreatorPlugin = async (ctx) => {
             await existing.stop();
             activeServers.delete(args.workspace);
           }
-          const templatePath = join10(TEMPLATES_DIR, "viewer.html");
+          const templatePath = join11(TEMPLATES_DIR, "viewer.html");
           const { server, url: url2, feedbackPath, stop } = await serveReview({
             workspace: args.workspace,
             port: args.port ?? 3117,
@@ -15302,7 +15572,7 @@ var SkillCreatorPlugin = async (ctx) => {
         },
         async execute(args) {
           const prep = prepareReviewLaunch(args);
-          const templatePath = join10(TEMPLATES_DIR, "viewer.html");
+          const templatePath = join11(TEMPLATES_DIR, "viewer.html");
           const outPath = exportStaticReview({
             workspace: args.workspace,
             outputPath: args.outputPath,
