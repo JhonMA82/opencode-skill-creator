@@ -123,6 +123,8 @@ cloud-deploy/
 ```
 OpenCode reads only the relevant reference file.
 
+After writing or editing a skill, run the `skill_context_lint` tool to check SKILL.md size, reference depth, duplicate sections, and progressive-disclosure suggestions. Budgets are configurable per call, and warnings are advisory — treat them as a signal to trim or restructure, not a hard gate.
+
 #### Principle of Lack of Surprise
 
 This goes without saying, but skills must not contain malware, exploit code, or any content that could compromise system security. A skill's contents should not surprise the user in their intent if described. Don't go along with requests to create misleading skills or skills designed to facilitate unauthorized access, data exfiltration, or other malicious activities. Things like a "roleplay as an XYZ" are OK though.
@@ -441,6 +443,7 @@ The opencode-skill-creator plugin provides these custom tools that are available
 
 - **`skill_validate`** — Validate a skill's SKILL.md structure and frontmatter
 - **`skill_parse`** — Parse a SKILL.md and return its name, description, and content length
+- **`skill_context_lint`** — Lint context/token budget (SKILL.md size, references, duplicates)
 - **`skill_eval`** — Test trigger accuracy for a set of eval queries
 - **`skill_improve_description`** — LLM-powered description improvement based on eval failures
 - **`skill_optimize_loop`** — Full eval→improve optimization loop with train/test split

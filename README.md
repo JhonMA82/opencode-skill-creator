@@ -236,6 +236,8 @@ When loaded, this skill guides OpenCode through the full skill development lifec
 6. **Benchmark** skill performance with variance analysis
 7. **Install** the skill to the project or global OpenCode skills directory
 
+Throughout the loop, a context-budget lint (`skill_context_lint`) keeps SKILL.md and its references lean so skills load fast and stay cheap in tokens.
+
 ## Plugin tools
 
 The plugin registers these custom tools that OpenCode can call:
@@ -244,6 +246,7 @@ The plugin registers these custom tools that OpenCode can call:
 |------|---------|
 | `skill_validate` | Validate SKILL.md structure and frontmatter |
 | `skill_parse` | Parse SKILL.md and extract name/description |
+| `skill_context_lint` | Lint context/token budget (SKILL.md size, reference depth, duplicates) |
 | `skill_eval` | Test trigger accuracy for eval queries |
 | `skill_improve_description` | LLM-powered description improvement |
 | `skill_optimize_loop` | Full eval→improve optimization loop |
@@ -343,6 +346,7 @@ opencode-skill-creator/
     ├── lib/
     │   ├── utils.ts                   # SKILL.md frontmatter parsing
     │   ├── validate.ts                # Skill structure validation
+    │   ├── context-budget.ts          # Context/token budget lint
     │   ├── run-eval.ts                # Trigger evaluation via opencode run
     │   ├── improve-description.ts     # LLM-powered description improvement
     │   ├── run-loop.ts                # Eval→improve optimization loop

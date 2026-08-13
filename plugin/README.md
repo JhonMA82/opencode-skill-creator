@@ -228,6 +228,7 @@ The plugin registers these custom tools that OpenCode can call:
 |------|---------|
 | `skill_validate` | Validate SKILL.md structure and frontmatter |
 | `skill_parse` | Parse SKILL.md and extract name/description |
+| `skill_context_lint` | Lint context/token budget (SKILL.md size, reference depth, duplicates) |
 | `skill_eval` | Test trigger accuracy for eval queries |
 | `skill_improve_description` | LLM-powered description improvement |
 | `skill_optimize_loop` | Full eval->improve optimization loop |
