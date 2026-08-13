@@ -377,6 +377,41 @@ opencode-skill-creator/
 | Packaging | `.skill` zip files | npm package + skill directory |
 | Subagents | Built-in subagent concept | Task tool with `general`/`explore` types |
 
+## Fork evolution (JhonMA82)
+
+This fork keeps [antongulin/opencode-skill-creator](https://github.com/antongulin/opencode-skill-creator) as its technical base and adds **evidence-driven Agent Skill authoring** capabilities per the evolution proposal ([`opencode-skill-creator-propuesta-evolucion.md`](opencode-skill-creator-propuesta-evolucion.md)): behavioral TDD, context-budget linting, and instruction-usefulness analysis. Upstream synchronization is preserved and unchanged:
+
+```bash
+git fetch upstream && git rebase upstream/main
+```
+
+### Provenance matrix
+
+Every added capability carries its provenance, so it stays clear what is conserved from upstream and what is inspired by other projects.
+
+| Capability | Primary source | Integration |
+|---|---|---|
+| OpenCode plugin/tooling | Anton | Conserved |
+| Skill creation pipeline | Anton + Anthropic | Extended, not replaced |
+| Baseline eval | Anthropic / Anton | Conserved and reinforced |
+| Behavioral TDD | Superpowers | Added |
+| Pressure scenarios | Superpowers | Added |
+| Rationalization testing | Superpowers | Added |
+| Trigger optimization | Anton + Anthropic | Conserved |
+| Progressive disclosure | Agent Skills + OpenAI | Added lint |
+| Token/context discipline | Microsoft | Added lint |
+| Instruction usefulness | Matt Pocock | Added (experimental) |
+| Skill specification | Agent Skills | Compatibility mandatory |
+| Workflow composition | Comet | Optional adapter, deferred until a real need |
+| Multi-platform packaging | Francy | Postponed |
+| Simple cross-agent authoring | Gentleman | Secondary reference only |
+
+### Fork changes
+
+- **Five new plugin tools**: `skill_validate_cases` (behavioral case validation + baseline policy), `skill_collect_rationalizations` (observable failure explanations), `skill_regression_suite` (permanent regression cases), `skill_context_lint` (context/token budget lint), and `skill_instruction_usefulness` (does an instruction earn its context cost).
+- **Methodology docs**: the authoring methodology is documented in [`docs/methodologies/`](docs/methodologies/) — [behavioral-tdd.md](docs/methodologies/behavioral-tdd.md), [evaluation-strategy.md](docs/methodologies/evaluation-strategy.md), [progressive-disclosure.md](docs/methodologies/progressive-disclosure.md), and [instruction-quality.md](docs/methodologies/instruction-quality.md).
+- **Upstream-friendly Linux fix**: the best-effort browser open in the review server now handles the async `error` event, so headless Linux environments (where `open` does not exist) no longer crash the server with an `uncaughtException` — a minimal change that does not affect macOS behavior and could be contributed upstream.
+
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
