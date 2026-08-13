@@ -568,3 +568,29 @@ Output of the `skill_context_lint` tool. Budgets are configurable per call; warn
 **Output:** JSON with `checks` (array of `{check, level, message}`, where `level` is `"ok"` | `"warning"` | `"error"`) and `summary` (`{ok, warning, error}` counts).
 
 **Defaults:** SKILL.md warning 500 words, frequent-loading warning 250 words, reference depth 2. Warnings are advisory; budgets are configurable per call.
+## instruction usefulness
+
+Input to the `skill_instruction_usefulness` tool: compares pass rates from runs with and without a single instruction to decide whether the instruction earns its context cost (the "Write clean, maintainable code" problem — instructions that sound good but do not measurably change behavior).
+
+**Input fields:**
+- `baseline_pass_rate`: Pass rate (0–1) WITHOUT the instruction
+- `with_instruction_pass_rate`: Pass rate (0–1) WITH the instruction
+- `baseline_runs`: Number of baseline runs (sample size)
+- `with_runs`: Number of with-instruction runs (sample size)
+- `instruction_text`: Optional; the instruction being assessed (echoed in the output)
+
+**Result fields:**
+- `delta`: `with_instruction_pass_rate - baseline_pass_rate`, rounded to 4 decimals
+- `sample_size`: `min(baseline_runs, with_runs)`
+- `recommendation`: `keep` | `review` | `remove` | `insufficient-data`
+- `rationale`: Human-readable explanation of the verdict
+- `instruction_text`: Echoed when provided
+
+**Decision rules (configurable heuristics, not universal rules):**
+- `insufficient-data` when `sample_size < 5` — too few runs per side to distinguish signal from noise
+- `remove` when `delta <= 0.02` — the change does not justify the instruction's context cost
+- `keep` when `delta >= 0.05` — meaningful behavioral improvement
+- `review` when `0.02 < delta < 0.05` — run more samples or review the transcript quality before deciding
+- No-op override: when `baseline_pass_rate >= 0.95` and `delta <= 0.03`, recommend `remove` — the agent already performs the behavior consistently without the instruction
+
+The thresholds above are defaults, not universal rules; adjust them to the skill's cost/benefit profile.

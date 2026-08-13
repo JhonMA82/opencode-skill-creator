@@ -8,6 +8,7 @@ The OpenCode plugin half of the project (npm package `opencode-skill-creator`): 
 
 - `skill-creator.ts` — plugin entry point; every tool registration lives here as one `tool({...})` block
 - `lib/` — pure logic modules (`aggregate.ts`, `context-budget.ts`, `failure-taxonomy.ts`, `gold-standards.ts`, `improve-description.ts`, `process.ts`, `report.ts`, `review-server.ts`, `run-eval.ts`, `run-loop.ts`, `skill-install.ts`, `utils.ts`, `validate.ts`, `workflow-guard.ts`)
+- `lib/` — pure logic modules (`aggregate.ts`, `context-budget.ts`, `failure-taxonomy.ts`, `gold-standards.ts`, `improve-description.ts`, `instruction-usefulness.ts`, `process.ts`, `report.ts`, `review-server.ts`, `run-eval.ts`, `run-loop.ts`, `skill-install.ts`, `utils.ts`, `validate.ts`, `workflow-guard.ts`)
 - `test/` — bun tests (`*.test.ts`) and node/package tests (`*.test.mjs`)
 - `dist/` — committed compiled output; `npm run build` regenerates it from sources
 - `skill/` — bundled skill mirror of the repo-root `opencode-skill-creator/`; keep both copies identical on every edit

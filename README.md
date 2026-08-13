@@ -235,6 +235,7 @@ When loaded, this skill guides OpenCode through the full skill development lifec
 5. **Optimize** the description through iterative improvement loops
 6. **Benchmark** skill performance with variance analysis
 7. **Install** the skill to the project or global OpenCode skills directory
+8. **Audit** individual instructions with a usefulness analysis (instruction-minimalism check) so each one earns its context cost
 
 It also supports **behavioral TDD**: skill-type classification (discipline/technique/pattern/reference/workflow) with per-type baseline policy, pressure cases that test the skill under adversarial conditions, rationalization capture from failed runs, and a permanent regression suite that reruns every real behavioral failure on each iteration.
 Throughout the loop, a context-budget lint (`skill_context_lint`) keeps SKILL.md and its references lean so skills load fast and stay cheap in tokens.
@@ -259,6 +260,7 @@ The plugin registers these custom tools that OpenCode can call:
 | `skill_validate_cases` | Validate behavioral case sets and report the baseline policy |
 | `skill_collect_rationalizations` | Collect observable rationalization records from grading.json files |
 | `skill_regression_suite` | Manage the regression suite (add/list/resolve cases) |
+| `skill_instruction_usefulness` | Assess whether an instruction earns its context cost |
 
 ### Description optimization loop
 
