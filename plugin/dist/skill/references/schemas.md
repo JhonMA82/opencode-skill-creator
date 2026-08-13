@@ -431,108 +431,32 @@ Output from post-hoc analyzer. Located at `<grading-dir>/analysis.json`.
 
 ---
 
-## behavioral cases
+## context budget lint
 
-Defines behavioral eval cases for the Behavioral TDD workflow. A behavioral case set may be a plain array of cases or an object of the form `{ "evals": [...] }` (matching the `evals.json` workspace shape) — both are accepted by `skill_validate_cases`. Located at `evals/evals.json` within the skill directory.
+Output of the `skill_context_lint` tool. Budgets are configurable per call; warnings are advisory, never hard errors.
 
-```json
-[
-  {
-    "id": "case-1",
-    "type": "pressure",
-    "skill_type": "discipline",
-    "intent": "The skill must enforce verification even under time pressure",
-    "prompt": "The user's task prompt",
-    "expected_behavior": [
-      "The agent runs the verification step before declaring completion",
-      "The agent does not skip the skill's mandatory gate"
-    ],
-    "baseline": { "required": true, "reason": "Discipline skills need a baseline to prove the rule changes behavior" },
-    "tags": ["verification", "time-pressure"]
-  }
-]
-```
+**Budget limits (`budgets` argument):**
 
-**Fields:**
-- `id`: Optional case identifier
-- `type`: `"standard"` (default), `"pressure"`, or `"regression"`
-- `skill_type`: One of `discipline`, `technique`, `pattern`, `reference`, `workflow`
-- `intent`: What behavior the case probes
-- `prompt`: The task to execute (required)
-- `expected_behavior[]`: Observable behaviors the agent must exhibit
-- `baseline`: Optional per-case baseline policy override with `required` (`true`/`false`) and `reason`
-- `tags[]`: Optional free-form tags
+| Field | Default | Meaning |
+|---|---|---|
+| `skill_md.warning_words` | `500` | SKILL.md body word count above which a warning is raised |
+| `skill_md.error_words` | `null` | Optional hard-error threshold; no error is raised while `null` |
+| `frequent_skill.warning_words` | `250` | SKILL.md warning threshold for frequently loaded skills (`frequent: true` or `load: always` metadata) |
+| `reference_depth.warning` | `2` | Maximum directory nesting under `references/` before a warning |
 
-**Compatibility:** a behavioral case set may be an array of cases or `{ "evals": [...] }` — `skill_validate_cases` accepts both.
+**Checked metrics (in order):**
 
----
+- `skill_md_exists` — SKILL.md presence (error if missing)
+- `frontmatter_valid` — frontmatter present with `name` and `description` (error if missing)
+- `skill_md_words` — SKILL.md body word count (warning above 500 by default)
+- `skill_md_tokens` — estimated tokens (`ceil(words * 1.33)`, heuristic only, always informational)
+- `references_count` — files under `references/` (ok 0–5, warning above)
+- `reference_depth` — max directory nesting under `references/` (top-level files are depth 1)
+- `largest_reference` — largest reference file by word count (warning above 1500 words)
+- `duplicate_sections` — duplicate ATX headings in the SKILL.md body (warning lists up to 3)
+- `examples_count` — headings matching Example/Examples (informational)
+- `progressive_disclosure` — suggests moving long sections into `references/` when SKILL.md exceeds 500 words with fewer than 2 reference files
 
-## rationalization
+**Output:** JSON with `checks` (array of `{check, level, message}`, where `level` is `"ok"` | `"warning"` | `"error"`) and `summary` (`{ok, warning, error}` counts).
 
-Observable failure explanation recorded on a failed run. Located at `<run-dir>/grading.json` as the optional `rationalization` object, plus optional `rationalization_summary` and `observations` fallbacks.
-
-```json
-{
-  "rationalization": {
-    "case_id": "eval-3",
-    "run_id": "eval-3-with_skill",
-    "trigger": "time-pressure",
-    "agent_reasoning_summary": "The agent skipped verification because the change looked too small",
-    "violated_rule": "Run verification before declaring completion",
-    "mitigation": "State that verification is mandatory even for small changes"
-  },
-  "rationalization_summary": ["The agent skipped verification because the change looked too small"],
-  "observations": ["The agent skipped the validation step because it was slow"]
-}
-```
-
-**Fields (`rationalization`):**
-- `case_id`: The eval case that failed
-- `run_id`: The run directory that failed
-- `trigger`: What pressured the agent (time-pressure, contradictory-instructions, sunk-cost, ...)
-- `agent_reasoning_summary`: OBSERVABLE summary of why the run failed
-- `violated_rule`: The skill rule that was skipped
-- `mitigation`: What the skill should change to close the loophole
-
-`grading.json` may also carry `rationalization_summary` (string or string[]) and `observations` (string[]) as fallbacks. `skill_collect_rationalizations` reads all of them and groups repeated summaries into patterns.
-
-**STRONG RULE:** only observable summaries are stored — what the agent did and reported doing. NEVER record private chain-of-thought.
-
----
-
-## regression suite
-
-Permanent regression cases for a skill. Located at `<skill>/evals/regression-suite.json`.
-
-```json
-{
-  "skill_name": "example-skill",
-  "cases": [
-    {
-      "id": "regression-01",
-      "source": "production-failure",
-      "origin_case_id": "eval-3",
-      "prompt": "Minimal reproducible prompt",
-      "expected_behavior": ["The agent runs the verification step"],
-      "rationalization_summary": ["The agent skipped verification because the change looked too small"],
-      "created_at": "2026-01-15T10:30:00Z",
-      "resolved": false
-    }
-  ]
-}
-```
-
-**Fields:**
-- `skill_name`: Name of the skill the suite belongs to
-- `cases[].id`: `"regression-<n>"` zero-padded, assigned on promotion
-- `cases[].source`: `"production-failure"` or `"eval-failure"`
-- `cases[].origin_case_id`: (optional) The eval case the failure came from
-- `cases[].prompt`: Minimal reproducible prompt
-- `cases[].expected_behavior[]`: Observable behaviors the agent must exhibit
-- `cases[].rationalization_summary[]`: Observable failure explanations
-- `cases[].created_at`: ISO timestamp of promotion
-- `cases[].resolved`: Whether the failure has been fixed
-
-**Promotion flow:** production failure → minimal reproducible prompt → regression case → fix → the case stays in the suite and is rerun on every future iteration.
-
-**Dedupe:** cases are deduped by prompt (case-insensitive, trimmed). Promoting a prompt that already exists returns the existing case without adding a duplicate.
+**Defaults:** SKILL.md warning 500 words, frequent-loading warning 250 words, reference depth 2. Warnings are advisory; budgets are configurable per call.

@@ -536,3 +536,35 @@ Permanent regression cases for a skill. Located at `<skill>/evals/regression-sui
 **Promotion flow:** production failure → minimal reproducible prompt → regression case → fix → the case stays in the suite and is rerun on every future iteration.
 
 **Dedupe:** cases are deduped by prompt (case-insensitive, trimmed). Promoting a prompt that already exists returns the existing case without adding a duplicate.
+
+---
+
+## context budget lint
+
+Output of the `skill_context_lint` tool. Budgets are configurable per call; warnings are advisory, never hard errors.
+
+**Budget limits (`budgets` argument):**
+
+| Field | Default | Meaning |
+|---|---|---|
+| `skill_md.warning_words` | `500` | SKILL.md body word count above which a warning is raised |
+| `skill_md.error_words` | `null` | Optional hard-error threshold; no error is raised while `null` |
+| `frequent_skill.warning_words` | `250` | SKILL.md warning threshold for frequently loaded skills (`frequent: true` or `load: always` metadata) |
+| `reference_depth.warning` | `2` | Maximum directory nesting under `references/` before a warning |
+
+**Checked metrics (in order):**
+
+- `skill_md_exists` — SKILL.md presence (error if missing)
+- `frontmatter_valid` — frontmatter present with `name` and `description` (error if missing)
+- `skill_md_words` — SKILL.md body word count (warning above 500 by default)
+- `skill_md_tokens` — estimated tokens (`ceil(words * 1.33)`, heuristic only, always informational)
+- `references_count` — files under `references/` (ok 0–5, warning above)
+- `reference_depth` — max directory nesting under `references/` (top-level files are depth 1)
+- `largest_reference` — largest reference file by word count (warning above 1500 words)
+- `duplicate_sections` — duplicate ATX headings in the SKILL.md body (warning lists up to 3)
+- `examples_count` — headings matching Example/Examples (informational)
+- `progressive_disclosure` — suggests moving long sections into `references/` when SKILL.md exceeds 500 words with fewer than 2 reference files
+
+**Output:** JSON with `checks` (array of `{check, level, message}`, where `level` is `"ok"` | `"warning"` | `"error"`) and `summary` (`{ok, warning, error}` counts).
+
+**Defaults:** SKILL.md warning 500 words, frequent-loading warning 250 words, reference depth 2. Warnings are advisory; budgets are configurable per call.

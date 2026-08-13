@@ -85,7 +85,10 @@ When the user requests a durable behavior change, record it here or in the relev
 
 ## Child DOX Index
 
-This project is not yet indexed. Before continuing you must scan the project, build the DOX tree and replace this message with the actual index. Go deep and scan files recursively to properly evaluate complexity and create nested DOX files where needed.
+- `plugin/` — the OpenCode plugin (npm package `opencode-skill-creator`): TS entry points, `lib/` modules, bun/node tests, committed `dist/` build → `plugin/AGENTS.md`
+- `opencode-skill-creator/` — the bundled skill; mirror copy of `plugin/skill/`, kept identical on every edit (sync contract owned by root)
+- `examples/` — demo skills and eval fixtures for the plugin workflow (owned by root)
+- Root docs (`README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `GEMINI.md`) — owned by root
 <!-- DOX:END -->
 
 <!-- BASELINE:BEGIN (managed by agents-md-bootstrap) -->
