@@ -12336,10 +12336,10 @@ function tool(input) {
 }
 tool.schema = exports_external;
 // skill-creator.ts
-import { join as join10, dirname as dirname3, isAbsolute, relative as relative2, sep } from "path";
+import { join as join11, dirname as dirname4, isAbsolute, relative as relative3, sep as sep2 } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
-import { existsSync as existsSync8, mkdirSync as mkdirSync6, readFileSync as readFileSync7, rmSync as rmSync3, writeFileSync as writeFileSync8 } from "fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync8, rmSync as rmSync3, writeFileSync as writeFileSync9 } from "fs";
 
 // lib/validate.ts
 import { existsSync, readFileSync } from "fs";
@@ -14829,19 +14829,361 @@ function ensureBundledSkillInstalled(options) {
   }
 }
 
+// lib/behavioral-tdd.ts
+import {
+  existsSync as existsSync8,
+  mkdirSync as mkdirSync6,
+  readdirSync as readdirSync6,
+  readFileSync as readFileSync7,
+  renameSync as renameSync3,
+  writeFileSync as writeFileSync8
+} from "fs";
+import { basename as basename5, dirname as dirname3, join as join10, relative as relative2, sep } from "path";
+var SKILL_TYPES = [
+  "discipline",
+  "technique",
+  "pattern",
+  "reference",
+  "workflow"
+];
+var CASE_TYPES = ["standard", "pressure", "regression"];
+function baselinePolicyForType(type) {
+  switch (type) {
+    case "discipline":
+      return {
+        baseline: "required",
+        rationale: "imposes rules; without a baseline you cannot prove the rule changes behavior"
+      };
+    case "workflow":
+      return {
+        baseline: "required",
+        rationale: "coordinates multiple steps; baseline proves the orchestration adds value"
+      };
+    case "technique":
+      return {
+        baseline: "recommended",
+        rationale: "teaches a skill; baseline helps but the technique may stand alone"
+      };
+    case "pattern":
+      return {
+        baseline: "recommended",
+        rationale: "recognition skills; baseline guards against false application"
+      };
+    case "reference":
+      return {
+        baseline: "optional",
+        rationale: "documentary; retrieval value is often self-evident"
+      };
+    default:
+      return {
+        baseline: "recommended",
+        rationale: "default for unclassified skills"
+      };
+  }
+}
+function isSkillType(value) {
+  return typeof value === "string" && SKILL_TYPES.includes(value);
+}
+function isCaseType(value) {
+  return typeof value === "string" && CASE_TYPES.includes(value);
+}
+function mostCommonSkillType(counts) {
+  let best = null;
+  let bestCount = 0;
+  for (const type of SKILL_TYPES) {
+    const count = counts.get(type) ?? 0;
+    if (count > bestCount) {
+      best = type;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+function validateBehavioralCases(data) {
+  let rawCases = [];
+  if (Array.isArray(data)) {
+    rawCases = data;
+  } else if (data && typeof data === "object" && Array.isArray(data.evals)) {
+    rawCases = data.evals;
+  } else {
+    return {
+      valid: false,
+      errors: [
+        "behavioral case set must be an array of cases or an object with an evals array"
+      ],
+      warnings: [],
+      cases: [],
+      baseline_policy: {
+        skill_type: null,
+        ...baselinePolicyForType(undefined)
+      }
+    };
+  }
+  const errors3 = [];
+  const warnings = [];
+  const cases = [];
+  const typeCounts = new Map;
+  for (const [index, raw] of rawCases.entries()) {
+    const label = `case ${index}`;
+    if (!raw || typeof raw !== "object") {
+      errors3.push(`${label}: expected an object`);
+      continue;
+    }
+    const input = raw;
+    const parsed = { prompt: "" };
+    if (typeof input.id === "string" && input.id.trim())
+      parsed.id = input.id;
+    if (typeof input.intent === "string" && input.intent.trim()) {
+      parsed.intent = input.intent;
+    }
+    if (typeof input.prompt !== "string" || input.prompt.trim() === "") {
+      errors3.push(`${label}: prompt must be a non-empty string`);
+    } else {
+      parsed.prompt = input.prompt;
+    }
+    let caseType = "standard";
+    if (input.type !== undefined) {
+      if (isCaseType(input.type)) {
+        caseType = input.type;
+      } else {
+        errors3.push(`${label}: type must be one of ${CASE_TYPES.join(", ")}`);
+      }
+    }
+    parsed.type = caseType;
+    if (input.skill_type !== undefined) {
+      if (isSkillType(input.skill_type)) {
+        parsed.skill_type = input.skill_type;
+        typeCounts.set(input.skill_type, (typeCounts.get(input.skill_type) ?? 0) + 1);
+      } else {
+        errors3.push(`${label}: skill_type must be one of ${SKILL_TYPES.join(", ")}`);
+      }
+    }
+    if (input.expected_behavior !== undefined) {
+      if (!Array.isArray(input.expected_behavior) || input.expected_behavior.some((b) => typeof b !== "string" || b.trim() === "")) {
+        errors3.push(`${label}: expected_behavior must be an array of non-empty strings`);
+      } else {
+        parsed.expected_behavior = input.expected_behavior;
+      }
+    }
+    if (input.tags !== undefined) {
+      if (!Array.isArray(input.tags) || input.tags.some((t) => typeof t !== "string")) {
+        errors3.push(`${label}: tags must be an array of strings`);
+      } else {
+        parsed.tags = input.tags;
+      }
+    }
+    if (input.baseline && typeof input.baseline === "object") {
+      parsed.baseline = input.baseline;
+    }
+    if ((caseType === "pressure" || caseType === "regression") && !(Array.isArray(input.expected_behavior) && input.expected_behavior.length > 0)) {
+      warnings.push(`${label}: ${caseType} case has no expected_behavior \u2014 observable expectations are what make the case fail honestly`);
+    }
+    if ((parsed.skill_type === "discipline" || parsed.skill_type === "workflow") && !(parsed.baseline && parsed.baseline.required === true)) {
+      warnings.push(`${label}: ${parsed.skill_type} case should declare baseline.required = true`);
+    }
+    cases.push(parsed);
+  }
+  const typedCount = cases.filter((c) => c.skill_type !== undefined).length;
+  if (typedCount > 0) {
+    for (const [index, c] of cases.entries()) {
+      if (c.skill_type === undefined) {
+        warnings.push(`case ${index}: no skill_type while other cases in the set are typed \u2014 inconsistent classification`);
+      }
+    }
+  }
+  const mostCommon = mostCommonSkillType(typeCounts);
+  const policy = baselinePolicyForType(mostCommon ?? undefined);
+  return {
+    valid: errors3.length === 0,
+    errors: errors3,
+    warnings,
+    cases,
+    baseline_policy: {
+      skill_type: mostCommon ?? null,
+      baseline: policy.baseline,
+      rationale: policy.rationale
+    }
+  };
+}
+var MAX_SCAN_DEPTH = 12;
+function collectRationalizations(workspaceDir) {
+  const records = [];
+  collectFromDir(workspaceDir, workspaceDir, 0, records);
+  return { records, patterns: groupPatterns(records) };
+}
+function collectFromDir(workspaceDir, dir, depth, records) {
+  if (depth > MAX_SCAN_DEPTH)
+    return;
+  let entries;
+  try {
+    entries = readdirSync6(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const fullPath = join10(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectFromDir(workspaceDir, fullPath, depth + 1, records);
+      continue;
+    }
+    if (!entry.isFile() || entry.name !== "grading.json")
+      continue;
+    const fileRecords = rationalizationsFromGradingFile(workspaceDir, fullPath);
+    if (fileRecords)
+      records.push(...fileRecords);
+  }
+}
+function splitLocation(workspaceDir, filePath) {
+  const relativeDir = relative2(workspaceDir, dirname3(filePath));
+  if (!relativeDir || relativeDir === ".")
+    return { case_id: "." };
+  const segments = relativeDir.split(sep);
+  if (segments.length > 1) {
+    return {
+      case_id: segments.slice(0, -1).join(sep),
+      run_id: segments[segments.length - 1]
+    };
+  }
+  return { case_id: relativeDir };
+}
+function rationalizationsFromGradingFile(workspaceDir, filePath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync7(filePath, "utf-8"));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object")
+    return null;
+  const grading = parsed;
+  const location = splitLocation(workspaceDir, filePath);
+  const records = [];
+  const rationalization = grading.rationalization && typeof grading.rationalization === "object" ? grading.rationalization : null;
+  const summary = rationalization && typeof rationalization.agent_reasoning_summary === "string" ? rationalization.agent_reasoning_summary.trim() : "";
+  if (summary) {
+    records.push({
+      case_id: location.case_id,
+      run_id: location.run_id,
+      trigger: rationalization && typeof rationalization.trigger === "string" ? rationalization.trigger : undefined,
+      agent_reasoning_summary: summary,
+      violated_rule: rationalization && typeof rationalization.violated_rule === "string" ? rationalization.violated_rule : undefined,
+      mitigation: rationalization && typeof rationalization.mitigation === "string" ? rationalization.mitigation : undefined
+    });
+  }
+  const summaryField = grading.rationalization_summary;
+  if (typeof summaryField === "string") {
+    if (summaryField.trim()) {
+      records.push({
+        case_id: location.case_id,
+        run_id: location.run_id,
+        agent_reasoning_summary: summaryField.trim()
+      });
+    }
+  } else if (Array.isArray(summaryField)) {
+    for (const entry of summaryField) {
+      if (typeof entry === "string" && entry.trim()) {
+        records.push({
+          case_id: location.case_id,
+          run_id: location.run_id,
+          agent_reasoning_summary: entry.trim()
+        });
+      }
+    }
+  }
+  if (records.length === 0 && Array.isArray(grading.observations)) {
+    for (const observation of grading.observations) {
+      if (typeof observation === "string" && observation.trim() && /skip/i.test(observation)) {
+        records.push({
+          case_id: location.case_id,
+          run_id: location.run_id,
+          agent_reasoning_summary: observation.trim()
+        });
+      }
+    }
+  }
+  return records.length > 0 ? records : null;
+}
+function groupPatterns(records) {
+  const counts = new Map;
+  for (const record2 of records) {
+    counts.set(record2.agent_reasoning_summary, (counts.get(record2.agent_reasoning_summary) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([summary, count]) => ({ summary, count })).sort((a, b) => b.count - a.count);
+}
+function loadRegressionSuite(path) {
+  if (!existsSync8(path))
+    return null;
+  try {
+    const parsed = JSON.parse(readFileSync7(path, "utf-8"));
+    if (!parsed || typeof parsed !== "object")
+      return null;
+    const candidate = parsed;
+    if (typeof candidate.skill_name !== "string")
+      return null;
+    if (!Array.isArray(candidate.cases))
+      return null;
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+function saveRegressionSuite(path, suite) {
+  const dir = dirname3(path);
+  mkdirSync6(dir, { recursive: true });
+  const tmpPath = join10(dir, `.${basename5(path)}.${process.pid}.${Date.now()}.tmp`);
+  writeFileSync8(tmpPath, JSON.stringify(suite, null, 2));
+  renameSync3(tmpPath, path);
+}
+function promoteToRegression(suitePath, input) {
+  const suite = loadRegressionSuite(suitePath) ?? {
+    skill_name: input.skill_name,
+    cases: []
+  };
+  const normalizedPrompt = input.prompt.trim();
+  const duplicate = suite.cases.find((c) => c.prompt.trim().toLowerCase() === normalizedPrompt.toLowerCase());
+  if (duplicate) {
+    return { suite, added: false, existing_id: duplicate.id, case: duplicate };
+  }
+  const regressionCase = {
+    id: `regression-${String(suite.cases.length + 1).padStart(2, "0")}`,
+    source: input.source,
+    origin_case_id: input.origin_case_id,
+    prompt: normalizedPrompt,
+    expected_behavior: input.expected_behavior ?? [],
+    rationalization_summary: input.rationalization_summary ?? [],
+    created_at: new Date().toISOString(),
+    resolved: false
+  };
+  suite.cases.push(regressionCase);
+  saveRegressionSuite(suitePath, suite);
+  return { suite, added: true, case: regressionCase };
+}
+function resolveRegressionCase(suitePath, id) {
+  const suite = loadRegressionSuite(suitePath);
+  if (!suite) {
+    return { suite: { skill_name: "", cases: [] }, found: false };
+  }
+  const target = suite.cases.find((c) => c.id === id);
+  if (!target)
+    return { suite, found: false };
+  target.resolved = true;
+  saveRegressionSuite(suitePath, suite);
+  return { suite, found: true };
+}
+
 // skill-creator.ts
-var PLUGIN_DIR = dirname3(fileURLToPath(import.meta.url));
-var TEMPLATES_DIR = join10(PLUGIN_DIR, "templates");
-var BUNDLED_SKILL_DIR = join10(PLUGIN_DIR, "skill");
-var PACKAGE_JSON_PATH = join10(PLUGIN_DIR, "package.json");
+var PLUGIN_DIR = dirname4(fileURLToPath(import.meta.url));
+var TEMPLATES_DIR = join11(PLUGIN_DIR, "templates");
+var BUNDLED_SKILL_DIR = join11(PLUGIN_DIR, "skill");
+var PACKAGE_JSON_PATH = join11(PLUGIN_DIR, "package.json");
 var AUTO_UPDATE_TTL_MS = 24 * 60 * 60 * 1000;
 var AUTO_UPDATE_STATUS_FILE = "opencode-skill-creator-update-check.json";
 var NPM_REGISTRY_URL = "https://registry.npmjs.org/opencode-skill-creator/latest";
 var AUTO_UPDATE_TIMEOUT_MS = 2500;
-var GOLD_STANDARDS_PATH = join10(homedir(), ".config", "opencode", "gold-standards.json");
+var GOLD_STANDARDS_PATH = join11(homedir(), ".config", "opencode", "gold-standards.json");
 var PACKAGE_VERSION = (() => {
   try {
-    const pkg = JSON.parse(readFileSync7(PACKAGE_JSON_PATH, "utf-8"));
+    const pkg = JSON.parse(readFileSync8(PACKAGE_JSON_PATH, "utf-8"));
     return pkg.version ?? "0.0.0";
   } catch {
     return "0.0.0";
@@ -14864,10 +15206,10 @@ function prepareReviewLaunch(args) {
   if (!resolvedBenchmarkPath) {
     try {
       const benchmark = generateBenchmark(args.workspace, args.skillName ?? "", "");
-      const jsonPath = join10(args.workspace, "benchmark.json");
-      const mdPath = join10(args.workspace, "benchmark.md");
-      writeFileSync8(jsonPath, JSON.stringify(benchmark, null, 2));
-      writeFileSync8(mdPath, generateMarkdown(benchmark));
+      const jsonPath = join11(args.workspace, "benchmark.json");
+      const mdPath = join11(args.workspace, "benchmark.md");
+      writeFileSync9(jsonPath, JSON.stringify(benchmark, null, 2));
+      writeFileSync9(mdPath, generateMarkdown(benchmark));
       resolvedBenchmarkPath = jsonPath;
     } catch {
       resolvedBenchmarkPath = null;
@@ -14884,14 +15226,14 @@ function normalizeDescriptionOverride(value) {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 function getAutoUpdatePaths() {
-  const cacheDir = process.env.XDG_CACHE_HOME || join10(homedir(), ".cache");
-  const configDir = process.env.XDG_CONFIG_HOME || join10(homedir(), ".config");
-  const packageCacheRoot = join10(cacheDir, "opencode", "packages", "opencode-skill-creator@latest");
+  const cacheDir = process.env.XDG_CACHE_HOME || join11(homedir(), ".cache");
+  const configDir = process.env.XDG_CONFIG_HOME || join11(homedir(), ".config");
+  const packageCacheRoot = join11(cacheDir, "opencode", "packages", "opencode-skill-creator@latest");
   return {
     packageCacheRoot,
-    cachedPackageDir: join10(packageCacheRoot, "node_modules", "opencode-skill-creator"),
-    cachedPackageJson: join10(packageCacheRoot, "node_modules", "opencode-skill-creator", "package.json"),
-    statusPath: join10(configDir, "opencode", AUTO_UPDATE_STATUS_FILE)
+    cachedPackageDir: join11(packageCacheRoot, "node_modules", "opencode-skill-creator"),
+    cachedPackageJson: join11(packageCacheRoot, "node_modules", "opencode-skill-creator", "package.json"),
+    statusPath: join11(configDir, "opencode", AUTO_UPDATE_STATUS_FILE)
   };
 }
 function compareVersions(a, b) {
@@ -14911,22 +15253,22 @@ function compareVersions(a, b) {
 }
 function readAutoUpdateStatus(path) {
   try {
-    return JSON.parse(readFileSync7(path, "utf-8"));
+    return JSON.parse(readFileSync8(path, "utf-8"));
   } catch {
     return {};
   }
 }
 function writeAutoUpdateStatus(path, status) {
   try {
-    mkdirSync6(dirname3(path), { recursive: true });
-    writeFileSync8(path, `${JSON.stringify(status, null, 2)}
+    mkdirSync7(dirname4(path), { recursive: true });
+    writeFileSync9(path, `${JSON.stringify(status, null, 2)}
 `, "utf-8");
   } catch {}
 }
 function isInsidePath(parent, child, pathModule = {
   isAbsolute,
-  relative: relative2,
-  sep
+  relative: relative3,
+  sep: sep2
 }) {
   const rel = pathModule.relative(parent, child);
   return rel === "" || !rel.startsWith("..") && !pathModule.isAbsolute(rel) && !rel.startsWith("/") && !rel.startsWith("\\") && !rel.includes(`..${pathModule.sep}`);
@@ -14973,7 +15315,7 @@ async function maybeAutoRefreshPluginCache(options = {}) {
       if (compareVersions(latestVersion, currentVersion) <= 0) {
         return { checked: true, cleared: false, reason: "up-to-date" };
       }
-      if (!existsSync8(paths.cachedPackageJson)) {
+      if (!existsSync9(paths.cachedPackageJson)) {
         return { checked: true, cleared: false, reason: "missing-cache" };
       }
       const currentPluginDir = options.currentPluginDir ?? PLUGIN_DIR;
@@ -14994,7 +15336,7 @@ var activeServers = new Map;
 var SkillCreatorPlugin = async (ctx) => {
   ensureBundledSkillInstalled({
     bundledSkillDir: BUNDLED_SKILL_DIR,
-    configDir: process.env.XDG_CONFIG_HOME || join10(homedir(), ".config"),
+    configDir: process.env.XDG_CONFIG_HOME || join11(homedir(), ".config"),
     packageVersion: PACKAGE_VERSION,
     onError: (message, error45) => console.warn(message, error45)
   });
@@ -15084,8 +15426,8 @@ var SkillCreatorPlugin = async (ctx) => {
           agent: tool.schema.string().optional().describe("OpenCode agent for trigger eval runs (default: build)")
         },
         async execute(args) {
-          const { readFileSync: readFileSync8 } = await import("fs");
-          const evalSet = JSON.parse(readFileSync8(args.evalSetPath, "utf-8"));
+          const { readFileSync: readFileSync9 } = await import("fs");
+          const evalSet = JSON.parse(readFileSync9(args.evalSetPath, "utf-8"));
           const validation = validateSkill(args.skillPath);
           if (!validation.valid) {
             throw new Error(`Invalid skill at ${args.skillPath}: ${validation.message}`);
@@ -15120,10 +15462,10 @@ var SkillCreatorPlugin = async (ctx) => {
           iteration: tool.schema.number().optional().describe("Current iteration number")
         },
         async execute(args) {
-          const { readFileSync: readFileSync8 } = await import("fs");
+          const { readFileSync: readFileSync9 } = await import("fs");
           const meta = parseSkillMd(args.skillPath);
-          const evalResults = JSON.parse(readFileSync8(args.evalResultsPath, "utf-8"));
-          const history = args.historyPath ? JSON.parse(readFileSync8(args.historyPath, "utf-8")) : [];
+          const evalResults = JSON.parse(readFileSync9(args.evalResultsPath, "utf-8"));
+          const history = args.historyPath ? JSON.parse(readFileSync9(args.historyPath, "utf-8")) : [];
           const newDescription = await improveDescription({
             skillName: meta.name,
             skillContent: meta.fullContent,
@@ -15156,8 +15498,8 @@ var SkillCreatorPlugin = async (ctx) => {
           logDir: tool.schema.string().optional().describe("Directory for improvement transcripts")
         },
         async execute(args) {
-          const { readFileSync: readFileSync8 } = await import("fs");
-          const evalSet = JSON.parse(readFileSync8(args.evalSetPath, "utf-8"));
+          const { readFileSync: readFileSync9 } = await import("fs");
+          const evalSet = JSON.parse(readFileSync9(args.evalSetPath, "utf-8"));
           const meta = parseSkillMd(args.skillPath);
           const projectRoot = findProjectRoot();
           await assertNoInstalledSkillConflict(meta.name, projectRoot);
@@ -15191,12 +15533,12 @@ var SkillCreatorPlugin = async (ctx) => {
           markdownPath: tool.schema.string().optional().describe("Path to write benchmark.md (default: <benchmarkDir>/benchmark.md)")
         },
         async execute(args) {
-          const { writeFileSync: writeFileSync9 } = await import("fs");
+          const { writeFileSync: writeFileSync10 } = await import("fs");
           const benchmark = generateBenchmark(args.benchmarkDir, args.skillName ?? "", args.skillPath ?? "");
-          const jsonPath = args.outputPath ?? join10(args.benchmarkDir, "benchmark.json");
-          writeFileSync9(jsonPath, JSON.stringify(benchmark, null, 2));
-          const mdPath = args.markdownPath ?? join10(args.benchmarkDir, "benchmark.md");
-          writeFileSync9(mdPath, generateMarkdown(benchmark));
+          const jsonPath = args.outputPath ?? join11(args.benchmarkDir, "benchmark.json");
+          writeFileSync10(jsonPath, JSON.stringify(benchmark, null, 2));
+          const mdPath = args.markdownPath ?? join11(args.benchmarkDir, "benchmark.md");
+          writeFileSync10(mdPath, generateMarkdown(benchmark));
           return JSON.stringify({
             benchmarkJsonPath: jsonPath,
             benchmarkMdPath: mdPath,
@@ -15213,13 +15555,13 @@ var SkillCreatorPlugin = async (ctx) => {
           autoRefresh: tool.schema.boolean().optional().describe("Add auto-refresh meta tag (default: false)")
         },
         async execute(args) {
-          const { readFileSync: readFileSync8, writeFileSync: writeFileSync9 } = await import("fs");
-          const data = JSON.parse(readFileSync8(args.dataPath, "utf-8"));
+          const { readFileSync: readFileSync9, writeFileSync: writeFileSync10 } = await import("fs");
+          const data = JSON.parse(readFileSync9(args.dataPath, "utf-8"));
           const html = generateHtml(data, {
             autoRefresh: args.autoRefresh ?? false,
             skillName: args.skillName ?? ""
           });
-          writeFileSync9(args.outputPath, html);
+          writeFileSync10(args.outputPath, html);
           return JSON.stringify({ reportPath: args.outputPath });
         }
       }),
@@ -15240,7 +15582,7 @@ var SkillCreatorPlugin = async (ctx) => {
             await existing.stop();
             activeServers.delete(args.workspace);
           }
-          const templatePath = join10(TEMPLATES_DIR, "viewer.html");
+          const templatePath = join11(TEMPLATES_DIR, "viewer.html");
           const { server, url: url2, feedbackPath, stop } = await serveReview({
             workspace: args.workspace,
             port: args.port ?? 3117,
@@ -15302,7 +15644,7 @@ var SkillCreatorPlugin = async (ctx) => {
         },
         async execute(args) {
           const prep = prepareReviewLaunch(args);
-          const templatePath = join10(TEMPLATES_DIR, "viewer.html");
+          const templatePath = join11(TEMPLATES_DIR, "viewer.html");
           const outPath = exportStaticReview({
             workspace: args.workspace,
             outputPath: args.outputPath,
@@ -15323,6 +15665,91 @@ var SkillCreatorPlugin = async (ctx) => {
             },
             message: `Static viewer written to ${outPath}`
           });
+        }
+      }),
+      skill_validate_cases: tool({
+        description: "Validate a behavioral case set (evals/evals.json) for the behavioral TDD workflow. Accepts an array of cases or {evals: [...]}. Checks prompt, type, skill_type, expected_behavior, and tags, and reports the baseline policy derived from the most common skill type.",
+        args: {
+          casesPath: tool.schema.string().describe("Path to the behavioral case set JSON (array of cases or {evals: [...]})")
+        },
+        async execute(args) {
+          const { readFileSync: readFileSync9 } = await import("fs");
+          const data = JSON.parse(readFileSync9(args.casesPath, "utf-8"));
+          const result = validateBehavioralCases(data);
+          return JSON.stringify({
+            valid: result.valid,
+            errors: result.errors,
+            warnings: result.warnings,
+            case_count: result.cases.length,
+            baseline_policy: result.baseline_policy
+          }, null, 2);
+        }
+      }),
+      skill_collect_rationalizations: tool({
+        description: "Collect observable rationalization records from every grading.json under a workspace: what pressured the agent, the observable summary of why it failed, and any violated rule or mitigation. Only explicit summary fields are read \u2014 never private chain-of-thought.",
+        args: {
+          workspace: tool.schema.string().describe("Path to the workspace directory containing grading.json files")
+        },
+        async execute(args) {
+          const report = collectRationalizations(args.workspace);
+          return JSON.stringify({
+            record_count: report.records.length,
+            records: report.records,
+            patterns: report.patterns
+          }, null, 2);
+        }
+      }),
+      skill_regression_suite: tool({
+        description: "Manage the regression suite for a skill: promote a real behavioral failure to a permanent regression case (deduped by prompt), list existing cases, or mark a case resolved.",
+        args: {
+          action: tool.schema.enum(["add", "list", "resolve"]).describe("Action: add a regression case, list the suite, or resolve a case"),
+          suitePath: tool.schema.string().describe("Path to the regression suite JSON file (e.g. <skill>/evals/regression-suite.json)"),
+          skillName: tool.schema.string().optional().describe("Skill name (required for add when the suite does not exist yet)"),
+          source: tool.schema.enum(["production-failure", "eval-failure"]).optional().describe("Failure source (defaults to eval-failure for add)"),
+          originCaseId: tool.schema.string().optional().describe("Origin eval case id for the failure"),
+          prompt: tool.schema.string().optional().describe("Minimal reproducible prompt (required for add)"),
+          expectedBehavior: tool.schema.array(tool.schema.string()).optional().describe("Expected observable behaviors"),
+          rationalizationSummary: tool.schema.array(tool.schema.string()).optional().describe("Observable rationalization summaries for the failure"),
+          id: tool.schema.string().optional().describe("Regression case id (required for resolve)")
+        },
+        async execute(args) {
+          switch (args.action) {
+            case "add": {
+              if (!args.skillName) {
+                throw new Error("skill_regression_suite add requires skillName");
+              }
+              if (!args.prompt) {
+                throw new Error("skill_regression_suite add requires prompt");
+              }
+              const result = promoteToRegression(args.suitePath, {
+                skill_name: args.skillName,
+                source: args.source ?? "eval-failure",
+                origin_case_id: args.originCaseId,
+                prompt: args.prompt,
+                expected_behavior: args.expectedBehavior,
+                rationalization_summary: args.rationalizationSummary
+              });
+              return JSON.stringify({
+                added: result.added,
+                existing_id: result.existing_id,
+                case: result.case
+              }, null, 2);
+            }
+            case "list": {
+              const suite = loadRegressionSuite(args.suitePath);
+              return JSON.stringify({ cases: suite?.cases ?? [] }, null, 2);
+            }
+            case "resolve": {
+              if (!args.id) {
+                throw new Error("skill_regression_suite resolve requires id");
+              }
+              const result = resolveRegressionCase(args.suitePath, args.id);
+              const resolvedCase = result.found ? result.suite.cases.find((c) => c.id === args.id) ?? null : null;
+              return JSON.stringify({ found: result.found, case: resolvedCase }, null, 2);
+            }
+            default:
+              throw new Error(`skill_regression_suite unknown action: ${String(args.action)}`);
+          }
         }
       })
     }

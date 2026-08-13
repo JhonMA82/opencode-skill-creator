@@ -39,6 +39,13 @@ import {
   removeGoldStandard,
 } from "./lib/gold-standards"
 import { ensureBundledSkillInstalled } from "./lib/skill-install"
+import {
+  collectRationalizations,
+  loadRegressionSuite,
+  promoteToRegression,
+  resolveRegressionCase,
+  validateBehavioralCases,
+} from "./lib/behavioral-tdd"
 
 import type { EvalItem } from "./lib/run-eval"
 
@@ -931,6 +938,153 @@ export const SkillCreatorPlugin: Plugin = async (ctx) => {
             },
             message: `Static viewer written to ${outPath}`,
           })
+        },
+      }),
+
+      // ---------------------------------------------------------------
+      // skill_validate_cases — validate a behavioral case set
+      // ---------------------------------------------------------------
+      skill_validate_cases: tool({
+        description:
+          "Validate a behavioral case set (evals/evals.json) for the behavioral TDD workflow. Accepts an array of cases or {evals: [...]}. Checks prompt, type, skill_type, expected_behavior, and tags, and reports the baseline policy derived from the most common skill type.",
+        args: {
+          casesPath: tool.schema
+            .string()
+            .describe("Path to the behavioral case set JSON (array of cases or {evals: [...]})"),
+        },
+        async execute(args) {
+          const { readFileSync } = await import("fs")
+          const data = JSON.parse(readFileSync(args.casesPath, "utf-8"))
+          const result = validateBehavioralCases(data)
+          return JSON.stringify(
+            {
+              valid: result.valid,
+              errors: result.errors,
+              warnings: result.warnings,
+              case_count: result.cases.length,
+              baseline_policy: result.baseline_policy,
+            },
+            null,
+            2,
+          )
+        },
+      }),
+
+      // ---------------------------------------------------------------
+      // skill_collect_rationalizations — collect failure explanations
+      // ---------------------------------------------------------------
+      skill_collect_rationalizations: tool({
+        description:
+          "Collect observable rationalization records from every grading.json under a workspace: what pressured the agent, the observable summary of why it failed, and any violated rule or mitigation. Only explicit summary fields are read — never private chain-of-thought.",
+        args: {
+          workspace: tool.schema
+            .string()
+            .describe("Path to the workspace directory containing grading.json files"),
+        },
+        async execute(args) {
+          const report = collectRationalizations(args.workspace)
+          return JSON.stringify(
+            {
+              record_count: report.records.length,
+              records: report.records,
+              patterns: report.patterns,
+            },
+            null,
+            2,
+          )
+        },
+      }),
+
+      // ---------------------------------------------------------------
+      // skill_regression_suite — manage the regression suite
+      // ---------------------------------------------------------------
+      skill_regression_suite: tool({
+        description:
+          "Manage the regression suite for a skill: promote a real behavioral failure to a permanent regression case (deduped by prompt), list existing cases, or mark a case resolved.",
+        args: {
+          action: tool.schema
+            .enum(["add", "list", "resolve"])
+            .describe("Action: add a regression case, list the suite, or resolve a case"),
+          suitePath: tool.schema
+            .string()
+            .describe("Path to the regression suite JSON file (e.g. <skill>/evals/regression-suite.json)"),
+          skillName: tool.schema
+            .string()
+            .optional()
+            .describe("Skill name (required for add when the suite does not exist yet)"),
+          source: tool.schema
+            .enum(["production-failure", "eval-failure"])
+            .optional()
+            .describe("Failure source (defaults to eval-failure for add)"),
+          originCaseId: tool.schema
+            .string()
+            .optional()
+            .describe("Origin eval case id for the failure"),
+          prompt: tool.schema
+            .string()
+            .optional()
+            .describe("Minimal reproducible prompt (required for add)"),
+          expectedBehavior: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Expected observable behaviors"),
+          rationalizationSummary: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Observable rationalization summaries for the failure"),
+          id: tool.schema
+            .string()
+            .optional()
+            .describe("Regression case id (required for resolve)"),
+        },
+        async execute(args) {
+          switch (args.action) {
+            case "add": {
+              if (!args.skillName) {
+                throw new Error("skill_regression_suite add requires skillName")
+              }
+              if (!args.prompt) {
+                throw new Error("skill_regression_suite add requires prompt")
+              }
+              const result = promoteToRegression(args.suitePath, {
+                skill_name: args.skillName,
+                source: args.source ?? "eval-failure",
+                origin_case_id: args.originCaseId,
+                prompt: args.prompt,
+                expected_behavior: args.expectedBehavior,
+                rationalization_summary: args.rationalizationSummary,
+              })
+              return JSON.stringify(
+                {
+                  added: result.added,
+                  existing_id: result.existing_id,
+                  case: result.case,
+                },
+                null,
+                2,
+              )
+            }
+            case "list": {
+              const suite = loadRegressionSuite(args.suitePath)
+              return JSON.stringify({ cases: suite?.cases ?? [] }, null, 2)
+            }
+            case "resolve": {
+              if (!args.id) {
+                throw new Error("skill_regression_suite resolve requires id")
+              }
+              const result = resolveRegressionCase(args.suitePath, args.id)
+              const resolvedCase = result.found
+                ? (result.suite.cases.find((c) => c.id === args.id) ?? null)
+                : null
+              return JSON.stringify(
+                { found: result.found, case: resolvedCase },
+                null,
+                2,
+              )
+            }
+            default:
+              throw new Error(`skill_regression_suite unknown action: ${String(args.action)}`)
+          }
         },
       }),
     },
