@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install plugin dependencies
+        working-directory: plugin
+        run: npm install
+
+      - name: Run TypeScript tests (bun)
+        working-directory: plugin
+        run: npm run test:ts
+
+      - name: Build plugin (regenerates dist/)
+        working-directory: plugin
+        run: npm run build
+
+      - name: Run package tests (node)
+        working-directory: plugin
+        run: npm test
+
+      - name: Verify dist is in sync with sources
+        run: git diff --exit-code -- plugin/dist
