@@ -431,6 +431,114 @@ Output from post-hoc analyzer. Located at `<grading-dir>/analysis.json`.
 
 ---
 
+## behavioral cases
+
+Defines behavioral eval cases for the Behavioral TDD workflow. A behavioral case set may be a plain array of cases or an object of the form `{ "evals": [...] }` (matching the `evals.json` workspace shape) — both are accepted by `skill_validate_cases`. Located at `evals/evals.json` within the skill directory.
+
+```json
+[
+  {
+    "id": "case-1",
+    "type": "pressure",
+    "skill_type": "discipline",
+    "intent": "The skill must enforce verification even under time pressure",
+    "prompt": "The user's task prompt",
+    "expected_behavior": [
+      "The agent runs the verification step before declaring completion",
+      "The agent does not skip the skill's mandatory gate"
+    ],
+    "baseline": { "required": true, "reason": "Discipline skills need a baseline to prove the rule changes behavior" },
+    "tags": ["verification", "time-pressure"]
+  }
+]
+```
+
+**Fields:**
+- `id`: Optional case identifier
+- `type`: `"standard"` (default), `"pressure"`, or `"regression"`
+- `skill_type`: One of `discipline`, `technique`, `pattern`, `reference`, `workflow`
+- `intent`: What behavior the case probes
+- `prompt`: The task to execute (required)
+- `expected_behavior[]`: Observable behaviors the agent must exhibit
+- `baseline`: Optional per-case baseline policy override with `required` (`true`/`false`) and `reason`
+- `tags[]`: Optional free-form tags
+
+**Compatibility:** a behavioral case set may be an array of cases or `{ "evals": [...] }` — `skill_validate_cases` accepts both.
+
+---
+
+## rationalization
+
+Observable failure explanation recorded on a failed run. Located at `<run-dir>/grading.json` as the optional `rationalization` object, plus optional `rationalization_summary` and `observations` fallbacks.
+
+```json
+{
+  "rationalization": {
+    "case_id": "eval-3",
+    "run_id": "eval-3-with_skill",
+    "trigger": "time-pressure",
+    "agent_reasoning_summary": "The agent skipped verification because the change looked too small",
+    "violated_rule": "Run verification before declaring completion",
+    "mitigation": "State that verification is mandatory even for small changes"
+  },
+  "rationalization_summary": ["The agent skipped verification because the change looked too small"],
+  "observations": ["The agent skipped the validation step because it was slow"]
+}
+```
+
+**Fields (`rationalization`):**
+- `case_id`: The eval case that failed
+- `run_id`: The run directory that failed
+- `trigger`: What pressured the agent (time-pressure, contradictory-instructions, sunk-cost, ...)
+- `agent_reasoning_summary`: OBSERVABLE summary of why the run failed
+- `violated_rule`: The skill rule that was skipped
+- `mitigation`: What the skill should change to close the loophole
+
+`grading.json` may also carry `rationalization_summary` (string or string[]) and `observations` (string[]) as fallbacks. `skill_collect_rationalizations` reads all of them and groups repeated summaries into patterns.
+
+**STRONG RULE:** only observable summaries are stored — what the agent did and reported doing. NEVER record private chain-of-thought.
+
+---
+
+## regression suite
+
+Permanent regression cases for a skill. Located at `<skill>/evals/regression-suite.json`.
+
+```json
+{
+  "skill_name": "example-skill",
+  "cases": [
+    {
+      "id": "regression-01",
+      "source": "production-failure",
+      "origin_case_id": "eval-3",
+      "prompt": "Minimal reproducible prompt",
+      "expected_behavior": ["The agent runs the verification step"],
+      "rationalization_summary": ["The agent skipped verification because the change looked too small"],
+      "created_at": "2026-01-15T10:30:00Z",
+      "resolved": false
+    }
+  ]
+}
+```
+
+**Fields:**
+- `skill_name`: Name of the skill the suite belongs to
+- `cases[].id`: `"regression-<n>"` zero-padded, assigned on promotion
+- `cases[].source`: `"production-failure"` or `"eval-failure"`
+- `cases[].origin_case_id`: (optional) The eval case the failure came from
+- `cases[].prompt`: Minimal reproducible prompt
+- `cases[].expected_behavior[]`: Observable behaviors the agent must exhibit
+- `cases[].rationalization_summary[]`: Observable failure explanations
+- `cases[].created_at`: ISO timestamp of promotion
+- `cases[].resolved`: Whether the failure has been fixed
+
+**Promotion flow:** production failure → minimal reproducible prompt → regression case → fix → the case stays in the suite and is rerun on every future iteration.
+
+**Dedupe:** cases are deduped by prompt (case-insensitive, trimmed). Promoting a prompt that already exists returns the existing case without adding a duplicate.
+
+---
+
 ## context budget lint
 
 Output of the `skill_context_lint` tool. Budgets are configurable per call; warnings are advisory, never hard errors.
