@@ -132,8 +132,17 @@ function mostCommonSkillType(counts: Map<SkillType, number>): SkillType | null {
  * object of the form `{ evals: [...] }` (matches the evals.json workspace
  * shape). Structural problems become errors; policy suggestions become
  * warnings.
+ *
+ * With `options.strict: true`, the two policy-suggestion classes that make a
+ * case fail dishonestly become errors instead of warnings: a pressure or
+ * regression case with no non-empty `expected_behavior`, and a discipline or
+ * workflow case without `baseline.required === true`. The message text is
+ * identical — only the bucket changes.
  */
-export function validateBehavioralCases(data: unknown): CaseValidationResult {
+export function validateBehavioralCases(
+  data: unknown,
+  options?: { strict?: boolean },
+): CaseValidationResult {
   let rawCases: unknown[] = []
   if (Array.isArray(data)) {
     rawCases = data
@@ -162,6 +171,7 @@ export function validateBehavioralCases(data: unknown): CaseValidationResult {
   const warnings: string[] = []
   const cases: BehavioralCase[] = []
   const typeCounts = new Map<SkillType, number>()
+  const strict = options?.strict === true
 
   for (const [index, raw] of rawCases.entries()) {
     const label = `case ${index}`
@@ -230,18 +240,18 @@ export function validateBehavioralCases(data: unknown): CaseValidationResult {
       (caseType === "pressure" || caseType === "regression") &&
       !(Array.isArray(input.expected_behavior) && input.expected_behavior.length > 0)
     ) {
-      warnings.push(
-        `${label}: ${caseType} case has no expected_behavior — observable expectations are what make the case fail honestly`,
-      )
+      const message = `${label}: ${caseType} case has no expected_behavior — observable expectations are what make the case fail honestly`
+      if (strict) errors.push(message)
+      else warnings.push(message)
     }
 
     if (
       (parsed.skill_type === "discipline" || parsed.skill_type === "workflow") &&
       !(parsed.baseline && parsed.baseline.required === true)
     ) {
-      warnings.push(
-        `${label}: ${parsed.skill_type} case should declare baseline.required = true`,
-      )
+      const message = `${label}: ${parsed.skill_type} case should declare baseline.required = true`
+      if (strict) errors.push(message)
+      else warnings.push(message)
     }
 
     cases.push(parsed)
@@ -473,18 +483,86 @@ export interface RegressionSuite {
   cases: RegressionCase[]
 }
 
+/**
+ * Load and validate a regression suite file.
+ *
+ * - Missing file → null (create-if-missing callers treat that as a new suite).
+ * - File exists but JSON.parse fails → throws, naming the path and the parse
+ *   problem.
+ * - Structural problems (skill_name, cases, or any per-case field) → throws
+ *   ONE aggregated error listing every problem, so a corrupted suite surfaces
+ *   loudly instead of being blind-cast.
+ */
 export function loadRegressionSuite(path: string): RegressionSuite | null {
   if (!existsSync(path)) return null
+
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown
-    if (!parsed || typeof parsed !== "object") return null
-    const candidate = parsed as Record<string, unknown>
-    if (typeof candidate.skill_name !== "string") return null
-    if (!Array.isArray(candidate.cases)) return null
-    return candidate as RegressionSuite
-  } catch {
-    return null
+    parsed = JSON.parse(readFileSync(path, "utf-8"))
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`regression suite ${path} contains invalid JSON: ${detail}`)
   }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `regression suite ${path} is malformed: suite must be an object with skill_name and cases`,
+    )
+  }
+
+  const candidate = parsed as Record<string, unknown>
+  const problems: string[] = []
+
+  if (typeof candidate.skill_name !== "string" || candidate.skill_name.trim() === "") {
+    problems.push("skill_name must be a non-empty string")
+  }
+  if (!Array.isArray(candidate.cases)) {
+    problems.push("cases must be an array")
+  } else {
+    for (const [index, raw] of candidate.cases.entries()) {
+      const label = `case ${index}`
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        problems.push(`${label}: expected an object`)
+        continue
+      }
+      const item = raw as Record<string, unknown>
+      if (typeof item.id !== "string" || item.id.trim() === "") {
+        problems.push(`${label}: id must be a non-empty string`)
+      }
+      if (typeof item.prompt !== "string" || item.prompt.trim() === "") {
+        problems.push(`${label}: prompt must be a non-empty string`)
+      }
+      if (item.source !== "production-failure" && item.source !== "eval-failure") {
+        problems.push(`${label}: source must be production-failure or eval-failure`)
+      }
+      if (
+        !Array.isArray(item.expected_behavior) ||
+        !item.expected_behavior.every((entry) => typeof entry === "string")
+      ) {
+        problems.push(`${label}: expected_behavior must be an array of strings`)
+      }
+      if (
+        !Array.isArray(item.rationalization_summary) ||
+        !item.rationalization_summary.every((entry) => typeof entry === "string")
+      ) {
+        problems.push(`${label}: rationalization_summary must be an array of strings`)
+      }
+      if (typeof item.created_at !== "string") {
+        problems.push(`${label}: created_at must be a string`)
+      }
+      if (typeof item.resolved !== "boolean") {
+        problems.push(`${label}: resolved must be a boolean`)
+      }
+      if (item.origin_case_id !== undefined && typeof item.origin_case_id !== "string") {
+        problems.push(`${label}: origin_case_id must be a string`)
+      }
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(`regression suite ${path} is malformed: ${problems.join("; ")}`)
+  }
+  return candidate as RegressionSuite
 }
 
 export function saveRegressionSuite(path: string, suite: RegressionSuite): void {
@@ -508,7 +586,13 @@ export function promoteToRegression(
   suitePath: string,
   input: PromoteRegressionInput,
 ): { suite: RegressionSuite; added: boolean; existing_id?: string; case: RegressionCase } {
-  const suite = loadRegressionSuite(suitePath) ?? {
+  const loaded = loadRegressionSuite(suitePath)
+  if (loaded && loaded.skill_name !== input.skill_name) {
+    throw new Error(
+      `regression suite ${suitePath} belongs to skill '${loaded.skill_name}'; refusing to append case for skill '${input.skill_name}'`,
+    )
+  }
+  const suite = loaded ?? {
     skill_name: input.skill_name,
     cases: [],
   }

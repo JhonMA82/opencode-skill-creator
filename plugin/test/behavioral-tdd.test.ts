@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { dirname, join } from "path"
 
@@ -202,6 +202,75 @@ test("validateBehavioralCases accepts a discipline case with required baseline",
 
   expect(result.valid).toBe(true)
   expect(result.warnings.filter((w) => w.includes("baseline.required"))).toEqual([])
+})
+
+// ---------------------------------------------------------------------------
+// strict mode
+// ---------------------------------------------------------------------------
+
+test("strict mode promotes missing expected_behavior on pressure/regression cases to errors", () => {
+  const cases = [
+    { prompt: "p", type: "pressure" },
+    { prompt: "q", type: "regression", expected_behavior: [] },
+  ]
+
+  const lenient = validateBehavioralCases(cases)
+  expect(lenient.valid).toBe(true)
+  expect(lenient.errors).toEqual([])
+  expect(lenient.warnings.filter((w) => w.includes("no expected_behavior"))).toHaveLength(2)
+
+  const strict = validateBehavioralCases(cases, { strict: true })
+  expect(strict.valid).toBe(false)
+  expect(strict.errors.filter((e) => e.includes("no expected_behavior"))).toHaveLength(2)
+  expect(strict.warnings.filter((w) => w.includes("no expected_behavior"))).toEqual([])
+  // Same message text, different bucket.
+  expect(strict.errors[0]).toBe(lenient.warnings[0])
+})
+
+test("strict mode promotes missing baseline.required on discipline/workflow cases to errors", () => {
+  const cases = [
+    { prompt: "p", skill_type: "discipline" },
+    { prompt: "q", skill_type: "workflow", baseline: { required: false } },
+  ]
+
+  const lenient = validateBehavioralCases(cases)
+  expect(lenient.valid).toBe(true)
+  expect(lenient.errors).toEqual([])
+  expect(lenient.warnings.filter((w) => w.includes("baseline.required"))).toHaveLength(2)
+
+  const strict = validateBehavioralCases(cases, { strict: true })
+  expect(strict.valid).toBe(false)
+  expect(strict.errors.filter((e) => e.includes("baseline.required"))).toHaveLength(2)
+  expect(strict.warnings.filter((w) => w.includes("baseline.required"))).toEqual([])
+})
+
+test("strict mode does not flag cases that satisfy the requirements", () => {
+  const result = validateBehavioralCases(
+    [
+      {
+        prompt: "p",
+        type: "pressure",
+        skill_type: "discipline",
+        expected_behavior: ["Runs the mandatory gate"],
+        baseline: { required: true },
+      },
+    ],
+    { strict: true },
+  )
+
+  expect(result.valid).toBe(true)
+  expect(result.errors).toEqual([])
+  expect(result.warnings).toEqual([])
+})
+
+test("strict mode leaves the untyped-case classification warning as a warning", () => {
+  const result = validateBehavioralCases(
+    [{ prompt: "p1", skill_type: "discipline" }, { prompt: "p2" }],
+    { strict: true },
+  )
+
+  expect(result.warnings.some((w) => w.includes("inconsistent classification"))).toBe(true)
+  expect(result.errors.some((e) => e.includes("inconsistent classification"))).toBe(false)
 })
 
 test("validateBehavioralCases warns about untyped cases in a typed set", () => {
@@ -455,6 +524,19 @@ test("promoteToRegression assigns sequential zero-padded ids and persists", () =
     "regression-02",
     "regression-03",
   ])
+
+  // The on-disk file must contain the newly appended case.
+  const onDisk = JSON.parse(readFileSync(suitePath, "utf-8")) as {
+    skill_name: string
+    cases: { id: string; prompt: string }[]
+  }
+  expect(onDisk.skill_name).toBe("example-skill")
+  expect(onDisk.cases.map((c) => c.id)).toEqual([
+    "regression-01",
+    "regression-02",
+    "regression-03",
+  ])
+  expect(onDisk.cases[2].prompt).toBe("p3")
 })
 
 test("resolveRegressionCase marks a case resolved and saves", () => {
@@ -501,19 +583,137 @@ test("loadRegressionSuite returns null for a missing file", () => {
   expect(loadRegressionSuite(join(workspace, "missing.json"))).toBeNull()
 })
 
-test("loadRegressionSuite returns null for invalid JSON", () => {
+test("loadRegressionSuite throws for invalid JSON, naming the path and problem", () => {
   const workspace = newTempDir("regression-load-invalid")
   const suitePath = join(workspace, "regression-suite.json")
   mkdirSync(dirname(suitePath), { recursive: true })
   writeFileSync(suitePath, "not json")
 
-  expect(loadRegressionSuite(suitePath)).toBeNull()
+  expect(() => loadRegressionSuite(suitePath)).toThrow(
+    new RegExp(`regression suite ${suitePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} contains invalid JSON`),
+  )
 })
 
-test("loadRegressionSuite returns null for a shape without a cases array", () => {
-  const workspace = newTempDir("regression-load-shape")
+test("loadRegressionSuite throws when skill_name is missing or empty", () => {
+  const workspace = newTempDir("regression-load-skill-name")
+  const suitePath = join(workspace, "regression-suite.json")
+
+  writeJson(suitePath, { cases: [] })
+  expect(() => loadRegressionSuite(suitePath)).toThrow(
+    /skill_name must be a non-empty string/,
+  )
+
+  writeJson(suitePath, { skill_name: "   ", cases: [] })
+  expect(() => loadRegressionSuite(suitePath)).toThrow(
+    /skill_name must be a non-empty string/,
+  )
+})
+
+test("loadRegressionSuite throws when cases is not an array", () => {
+  const workspace = newTempDir("regression-load-cases")
   const suitePath = join(workspace, "regression-suite.json")
   writeJson(suitePath, { skill_name: "example-skill" })
 
-  expect(loadRegressionSuite(suitePath)).toBeNull()
+  expect(() => loadRegressionSuite(suitePath)).toThrow(
+    new RegExp(
+      `regression suite ${suitePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} is malformed: cases must be an array`,
+    ),
+  )
+})
+
+test("loadRegressionSuite aggregates every malformed case problem in one error", () => {
+  const workspace = newTempDir("regression-load-cases-malformed")
+  const suitePath = join(workspace, "regression-suite.json")
+  writeJson(suitePath, {
+    skill_name: "example-skill",
+    cases: [
+      { prompt: "p", source: "eval-failure", expected_behavior: [], rationalization_summary: [], created_at: "2026-01-01T00:00:00.000Z", resolved: false },
+      { id: "regression-02", source: "weird-source", prompt: "", expected_behavior: "nope", rationalization_summary: [42], created_at: 123, resolved: "yes", origin_case_id: 7 },
+    ],
+  })
+
+  expect(() => loadRegressionSuite(suitePath)).toThrow(
+    new RegExp(
+      [
+        `regression suite ${suitePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} is malformed:`,
+        "case 0: id must be a non-empty string",
+        "case 1: prompt must be a non-empty string",
+        "case 1: source must be production-failure or eval-failure",
+        "case 1: expected_behavior must be an array of strings",
+        "case 1: rationalization_summary must be an array of strings",
+        "case 1: created_at must be a string",
+        "case 1: resolved must be a boolean",
+        "case 1: origin_case_id must be a string",
+      ].join(".*"),
+    ),
+  )
+})
+
+test("loadRegressionSuite loads a valid suite with all its cases", () => {
+  const workspace = newTempDir("regression-load-valid")
+  const suitePath = join(workspace, "regression-suite.json")
+  writeJson(suitePath, {
+    skill_name: "example-skill",
+    cases: [
+      {
+        id: "regression-01",
+        source: "production-failure",
+        prompt: "Fix the broken migration",
+        expected_behavior: ["Runs the dry-run"],
+        rationalization_summary: ["Skipped the dry-run"],
+        created_at: "2026-01-01T00:00:00.000Z",
+        resolved: false,
+      },
+      {
+        id: "regression-02",
+        source: "eval-failure",
+        origin_case_id: "eval-4",
+        prompt: "Refactor without tests",
+        expected_behavior: [],
+        rationalization_summary: [],
+        created_at: "2026-01-02T00:00:00.000Z",
+        resolved: true,
+      },
+    ],
+  })
+
+  const suite = loadRegressionSuite(suitePath)
+  expect(suite?.skill_name).toBe("example-skill")
+  expect(suite?.cases).toHaveLength(2)
+  expect(suite?.cases[0].origin_case_id).toBeUndefined()
+  expect(suite?.cases[1].origin_case_id).toBe("eval-4")
+  expect(suite?.cases[1].resolved).toBe(true)
+})
+
+test("promoteToRegression refuses to append a case for a different skill", () => {
+  const workspace = newTempDir("regression-cross-skill")
+  const suitePath = join(workspace, "regression-suite.json")
+  const before = {
+    skill_name: "skill-a",
+    cases: [
+      {
+        id: "regression-01",
+        source: "eval-failure",
+        prompt: "p1",
+        expected_behavior: [],
+        rationalization_summary: [],
+        created_at: "2026-01-01T00:00:00.000Z",
+        resolved: false,
+      },
+    ],
+  }
+  writeJson(suitePath, before)
+
+  expect(() =>
+    promoteToRegression(suitePath, {
+      skill_name: "skill-b",
+      source: "eval-failure",
+      prompt: "p2",
+    }),
+  ).toThrow(
+    /regression suite .* belongs to skill 'skill-a'; refusing to append case for skill 'skill-b'/,
+  )
+
+  // The throw must happen before any write: the file is byte-identical.
+  expect(readFileSync(suitePath, "utf-8")).toBe(JSON.stringify(before, null, 2))
 })
