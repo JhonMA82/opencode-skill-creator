@@ -54,3 +54,22 @@
 6. **Comet adapter (V1.3)** — deferred: no demonstrated composition/export need in this fork yet (§16: "Únicamente si aparece una necesidad real"); architecture decision documented in `docs/methodologies/` and README.
 7. **Full cross-agent packaging (Francy) / second methodology copy (Gentleman)** — rejected per §18.
 8. **Token budgets as hard errors** — rejected: warnings only, configurable (§10).
+
+## 4. V1 closure
+
+### Completed
+
+- **fork distribution clarified** — README now has a "Fork identity and installation" section: the npm package `opencode-skill-creator` is explicitly attributed to upstream (so `npx` installs upstream, never this fork), fork installation from GitHub is documented, and the fork's auto-update check behavior (`OPENCODE_SKILL_CREATOR_AUTO_UPDATE=0`) is explained. Manual-install clone URL now points at the fork. `plugin/package.json` metadata deliberately stays upstream-owned (the fork does not publish the npm identity; keeping the file byte-identical to upstream avoids conflict surface on every upstream version bump — documented decision).
+- **instruction usefulness hardened** — `plugin/lib/instruction-usefulness.ts` now derives integer evidence (`passed` counts) instead of trusting arbitrary percentages, rejects impossible rate/run combinations (e.g. `0.55` with 5 runs), adds the canonical `assessInstructionUsefulnessFromEvidence` API, and gates `keep` on non-overlapping Wilson 95% intervals so small samples can no longer justify strong verdicts. 18 tests, including weak/strong/regression/invalid-data scenarios.
+- **CI added** — `.github/workflows/ci.yml` runs the TypeScript suite, the build, the package tests, and a `dist` consistency check on every push and pull request (previously no workflow executed tests for the fork).
+- **upstream conflict surface reduced** — the five fork tool registrations moved out of `plugin/skill-creator.ts` into `plugin/lib/evidence-tools.ts`; the fork delta in the upstream-owned entrypoint shrank from +230 to +7 lines (one import + one spread).
+- **regression suite validation hardened** — `loadRegressionSuite` validates every case against the actual schema and throws aggregated errors on malformed suites; `promoteToRegression` rejects cross-skill appends; the atomic tmp-file + rename write is preserved.
+- **optional strict behavioral validation** — `validateBehavioralCases(data, { strict })` promotes missing `expected_behavior` (pressure/regression) and missing `baseline.required` (discipline/workflow) from warnings to errors; `skill_validate_cases` exposes the optional `strict` argument.
+- **advisory description-trigger lint** — `skill_context_lint` gained the advisory `description_trigger` check (short descriptions warn that the skill may not say WHEN to trigger; purely advisory, no content gate).
+
+### Deferred
+
+- automatic pressure runner
+- Comet adapter
+- ambiguous trigger state
+- multi-platform packaging

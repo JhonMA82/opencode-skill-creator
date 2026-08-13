@@ -416,6 +416,19 @@ Every added capability carries its provenance, so it stays clear what is conserv
 - **Methodology docs**: the authoring methodology is documented in [`docs/methodologies/`](docs/methodologies/) — [behavioral-tdd.md](docs/methodologies/behavioral-tdd.md), [evaluation-strategy.md](docs/methodologies/evaluation-strategy.md), [progressive-disclosure.md](docs/methodologies/progressive-disclosure.md), and [instruction-quality.md](docs/methodologies/instruction-quality.md).
 - **Upstream-friendly Linux fix**: the best-effort browser open in the review server now handles the async `error` event, so headless Linux environments (where `open` does not exist) no longer crash the server with an `uncaughtException` — a minimal change that does not affect macOS behavior and could be contributed upstream.
 
+### Development
+
+```bash
+cd plugin
+npm install                            # dependencies (npm is the package manager)
+bun test --isolate test/*.test.ts      # TypeScript suite (behavioral, context, usefulness, ...)
+npm run build                          # regenerate dist/ from sources
+npm test                               # package/CLI tests against the built dist
+git diff --exit-code -- plugin/dist    # dist consistency check (from the repo root; also enforced by CI)
+```
+
+CI (`.github/workflows/ci.yml`) runs the TypeScript suite, the build, the package tests, and the dist consistency check on every push and pull request. For upstream synchronization see the command above (`git fetch upstream && git rebase upstream/main`).
+
 ## Fork identity and installation
 
 This repository is a maintained fork of [antongulin/opencode-skill-creator](https://github.com/antongulin/opencode-skill-creator) (fork owner: JhonMA82). The public npm package `opencode-skill-creator` belongs to the upstream project and tracks its releases — `npx opencode-skill-creator` and `npm i -g opencode-skill-creator` install upstream, not this fork's extensions.
