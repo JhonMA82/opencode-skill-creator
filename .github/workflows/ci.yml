@@ -36,4 +36,7 @@ jobs:
         run: npm test
 
       - name: Verify dist is in sync with sources
-        run: git diff --exit-code -- plugin/dist
+        # build-manifest.json's builtAt is a build timestamp, so it always
+        # differs after a rebuild; its meaningful freshness (sourceHash) is
+        # already enforced by the manifest test inside `npm test`.
+        run: git diff --exit-code -- plugin/dist ':!plugin/dist/build-manifest.json'
