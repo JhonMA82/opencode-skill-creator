@@ -307,6 +307,19 @@ Stop the viewer server when you're done with it by calling the `skill_stop_revie
 
 ---
 
+## Behavioral TDD
+
+Behavioral testing proves what the skill *does*, not just when it triggers. Classify the skill type, define observable expected behaviors per case, capture observable failure explanations, and hold every real behavioral failure as a permanent regression case.
+
+1. **Classify the skill type** — at intake (see Capture Intent question 5), classify the skill as `discipline`, `technique`, `pattern`, `reference`, or `workflow` using the definitions: discipline = imposes rules/process (TDD, security gates, mandatory verification); technique = teaches a method (debugging, refactoring, migrations); pattern = recognizes when to apply a solution; reference = primarily documentary; workflow = coordinates multi-step processes. Store it in `eval_metadata.json` as `skill_type`.
+2. **Baseline policy by type** — discipline and workflow REQUIRE a baseline comparison (`without_skill` or `old_skill`); technique and pattern strongly recommend it; reference is optional. Use the `skill_validate_cases` tool to check the policy for a case set.
+3. **RED → GREEN → REFACTOR** — RED: run the scenario WITHOUT the skill first and confirm the observed failure is real; GREEN: add the minimal instruction that fixes it and rerun; REFACTOR: hunt for evasions, rationalizations, and adversarial variants, close loopholes, rerun again. Record each case with `type: "standard" | "pressure" | "regression"`, `intent`, and `expected_behavior` in `evals/evals.json`, then validate with `skill_validate_cases`.
+4. **Pressure cases** — for discipline and workflow skills, add pressure variants to the eval set: time pressure, contradictory instructions, sunk-cost situations, long/fatigued context, temptation to skip steps. Mark them `type: "pressure"`. These prove the skill holds under adversarial conditions.
+5. **Rationalization capture** — when a run fails, use `skill_collect_rationalizations` to gather observable failure explanations from `grading.json` (`rationalization` fields or `observations`). Record only the observable summary of WHY it failed (e.g. "the agent skipped verification because the change looked too small"), never private chain-of-thought. Add the fields `trigger`, `agent_reasoning_summary`, `violated_rule`, `mitigation` to the failed run's `grading.json`.
+6. **Regression promotion** — any real behavioral failure found (production or eval) becomes a permanent regression case: `skill_regression_suite action: "add"` with the minimal reproducible prompt and expected behavior into `<skill>/evals/regression-suite.json`. The case stays in the suite forever; every future iteration reruns it. Duplicate prompts are deduped automatically.
+
+---
+
 ## Improving the skill
 
 This is the heart of the loop. You've run the test cases, the user has reviewed the results, and now you need to make the skill better based on their feedback.
@@ -449,6 +462,9 @@ The opencode-skill-creator plugin provides these custom tools that are available
 - **`skill_serve_review`** — Start the eval review viewer (HTTP server + browser)
 - **`skill_stop_review`** — Stop a running review server
 - **`skill_export_static_review`** — Generate standalone HTML review (no server)
+- **`skill_validate_cases`** — Validate a behavioral case set and report the baseline policy
+- **`skill_collect_rationalizations`** — Collect observable rationalization records from grading.json files
+- **`skill_regression_suite`** — Manage the regression suite (add/list/resolve cases)
 
 ---
 

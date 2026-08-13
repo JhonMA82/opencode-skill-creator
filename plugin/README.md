@@ -240,6 +240,9 @@ The plugin registers these custom tools that OpenCode can call:
 | `skill_list_gold_standards` | List saved gold-standard examples for a skill |
 | `skill_remove_gold_standard` | Remove a saved gold-standard example |
 | `skill_get_gold_advice` | Get guidance from saved gold-standard examples |
+| `skill_validate_cases` | Validate behavioral case sets and report the baseline policy |
+| `skill_collect_rationalizations` | Collect observable rationalization records from grading.json files |
+| `skill_regression_suite` | Manage the regression suite (add/list/resolve cases) |
 
 ### Review workflow guard (strict by default)
 

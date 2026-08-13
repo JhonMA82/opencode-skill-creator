@@ -236,6 +236,8 @@ When loaded, this skill guides OpenCode through the full skill development lifec
 6. **Benchmark** skill performance with variance analysis
 7. **Install** the skill to the project or global OpenCode skills directory
 
+It also supports **behavioral TDD**: skill-type classification (discipline/technique/pattern/reference/workflow) with per-type baseline policy, pressure cases that test the skill under adversarial conditions, rationalization capture from failed runs, and a permanent regression suite that reruns every real behavioral failure on each iteration.
+
 ## Plugin tools
 
 The plugin registers these custom tools that OpenCode can call:
@@ -252,6 +254,9 @@ The plugin registers these custom tools that OpenCode can call:
 | `skill_serve_review` | Start the eval review viewer (HTTP server) |
 | `skill_stop_review` | Stop a running review server |
 | `skill_export_static_review` | Generate standalone HTML review file |
+| `skill_validate_cases` | Validate behavioral case sets and report the baseline policy |
+| `skill_collect_rationalizations` | Collect observable rationalization records from grading.json files |
+| `skill_regression_suite` | Manage the regression suite (add/list/resolve cases) |
 
 ### Description optimization loop
 
