@@ -317,9 +317,11 @@ This is the heart of the loop. You've run the test cases, the user has reviewed 
 
 2. **Keep the prompt lean.** Remove things that aren't pulling their weight. Make sure to read the transcripts, not just the final outputs — if it looks like the skill is making the model waste a bunch of time doing things that are unproductive, you can try getting rid of the parts of the skill that are making it do that and seeing what happens.
 
-3. **Explain the why.** Try hard to explain the **why** behind everything you're asking the model to do. Today's LLMs are *smart*. They have good theory of mind and when given a good harness can go beyond rote instructions and really make things happen. Even if the feedback from the user is terse or frustrated, try to actually understand the task and why the user is writing what they wrote, and what they actually wrote, and then transmit this understanding into the instructions. If you find yourself writing ALWAYS or NEVER in all caps, or using super rigid structures, that's a yellow flag — if possible, reframe and explain the reasoning so that the model understands why the thing you're asking for is important. That's a more humane, powerful, and effective approach.
+3. **Measure instruction usefulness.** When deciding whether to keep a specific instruction, use the `skill_instruction_usefulness` tool with pass rates from baseline vs with-instruction runs (at least 5 runs per side). Remove instructions whose delta is negligible or whose behavior the agent already performs without the skill — this guards context cost against instructions that do not change behavior.
 
-4. **Look for repeated work across test cases.** Read the transcripts from the test runs and notice if the Task tool invocations all independently wrote similar helper scripts or took the same multi-step approach to something. If all 3 test cases resulted in the agent writing a `create_docx.py` or a `build_chart.py`, that's a strong signal the skill should bundle that script. Write it once, put it in `scripts/`, and tell the skill to use it. This saves every future invocation from reinventing the wheel.
+4. **Explain the why.** Try hard to explain the **why** behind everything you're asking the model to do. Today's LLMs are *smart*. They have good theory of mind and when given a good harness can go beyond rote instructions and really make things happen. Even if the feedback from the user is terse or frustrated, try to actually understand the task and why the user is writing what they wrote, and what they actually wrote, and then transmit this understanding into the instructions. If you find yourself writing ALWAYS or NEVER in all caps, or using super rigid structures, that's a yellow flag — if possible, reframe and explain the reasoning so that the model understands why the thing you're asking for is important. That's a more humane, powerful, and effective approach.
+
+5. **Look for repeated work across test cases.** Read the transcripts from the test runs and notice if the Task tool invocations all independently wrote similar helper scripts or took the same multi-step approach to something. If all 3 test cases resulted in the agent writing a `create_docx.py` or a `build_chart.py`, that's a strong signal the skill should bundle that script. Write it once, put it in `scripts/`, and tell the skill to use it. This saves every future invocation from reinventing the wheel.
 
 This task is pretty important (we are trying to create billions a year in economic value here!) and your thinking time is not the blocker; take your time and really mull things over. I'd suggest writing a draft revision and then looking at it anew and making improvements. Really do your best to get into the head of the user and understand what they want and need.
 
@@ -449,6 +451,7 @@ The opencode-skill-creator plugin provides these custom tools that are available
 - **`skill_serve_review`** — Start the eval review viewer (HTTP server + browser)
 - **`skill_stop_review`** — Stop a running review server
 - **`skill_export_static_review`** — Generate standalone HTML review (no server)
+- **`skill_instruction_usefulness`** — Assess whether an instruction changes behavior enough to justify its context cost
 
 ---
 

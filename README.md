@@ -235,6 +235,7 @@ When loaded, this skill guides OpenCode through the full skill development lifec
 5. **Optimize** the description through iterative improvement loops
 6. **Benchmark** skill performance with variance analysis
 7. **Install** the skill to the project or global OpenCode skills directory
+8. **Audit** individual instructions with a usefulness analysis (instruction-minimalism check) so each one earns its context cost
 
 ## Plugin tools
 
@@ -252,6 +253,7 @@ The plugin registers these custom tools that OpenCode can call:
 | `skill_serve_review` | Start the eval review viewer (HTTP server) |
 | `skill_stop_review` | Stop a running review server |
 | `skill_export_static_review` | Generate standalone HTML review file |
+| `skill_instruction_usefulness` | Assess whether an instruction earns its context cost |
 
 ### Description optimization loop
 
